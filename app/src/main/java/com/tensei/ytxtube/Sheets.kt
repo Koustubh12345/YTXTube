@@ -1,7 +1,6 @@
 package com.tensei.ytxtube
 
 import android.content.Intent
-import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -71,19 +70,7 @@ fun VideoOptionsSheet(video: VideoItem, player: PlayerState, onDismiss: () -> Un
         }
         OptionRow(Icons.AutoMirrored.Rounded.PlaylistPlay, "Play next") { player.playNext(video); onDismiss() }
         OptionRow(Icons.AutoMirrored.Rounded.PlaylistAdd, "Add to queue") { player.addToQueue(video); onDismiss() }
-        OptionRow(Icons.Rounded.Download, if (player.isMusicMode) "Download audio" else "Download") {
-            if (player.isMusicMode) {
-                val queued = Downloads.enqueueMusic(video)
-                Toast.makeText(
-                    context,
-                    if (queued) "Downloading audio: ${video.title}" else "Already queued or downloaded",
-                    Toast.LENGTH_SHORT,
-                ).show()
-            } else {
-                player.downloadFor = video
-            }
-            onDismiss()
-        }
+        OptionRow(Icons.Rounded.Download, "Download") { player.downloadFor = video; onDismiss() }
         if (Account.signedIn) {
             OptionRow(Icons.Rounded.WatchLater, "Save to Watch later") { player.saveToWatchLater(video); onDismiss() }
         }

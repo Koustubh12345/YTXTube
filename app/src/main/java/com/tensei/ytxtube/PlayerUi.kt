@@ -64,6 +64,7 @@ import androidx.compose.material.icons.outlined.ThumbDown
 import androidx.compose.material.icons.outlined.ThumbUp
 import androidx.compose.material.icons.outlined.WatchLater
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.Favorite
@@ -931,6 +932,8 @@ fun BitChordMusicPlayer(
 ) {
     val c = MaterialTheme.colorScheme
     val item = state.current ?: return
+    val context = LocalContext.current
+    var showTrackMenu by remember(item.id) { mutableStateOf(false) }
     var showLyrics by remember(item.id) { mutableStateOf(false) }
     var lyrics by remember(item.id) { mutableStateOf<LyricsDoc?>(null) }
     var lyricsLoading by remember(item.id) { mutableStateOf(false) }
@@ -945,8 +948,6 @@ fun BitChordMusicPlayer(
             lyricsLoading = false
         }
     }
-    val menu = LocalVideoMenu.current
-
     val albumScale by animateFloatAsState(
         targetValue = if (state.isPlaying) 1.0f else 0.92f,
         animationSpec = spring(dampingRatio = 0.7f, stiffness = 400f),
@@ -1025,7 +1026,7 @@ fun BitChordMusicPlayer(
                         color = c.onSurface,
                     )
                 }
-                IconButton(onClick = { menu(item) }) {
+                IconButton(onClick = { showTrackMenu = true }) {
                     Icon(
                         Icons.Rounded.MoreVert,
                         contentDescription = "Options",
@@ -1299,6 +1300,28 @@ fun BitChordMusicPlayer(
                 }
             }
         }
+    }
+
+    if (showTrackMenu) {
+        MusicTrackOptionsSheet(
+            track = item,
+            onPlayNext = { state.playNextMusic(item) },
+            onDownloadAudio = {
+                val queued = Downloads.enqueueMusic(item)
+                Toast.makeText(
+                    context,
+                    if (queued) "Downloading audio: ${item.title}" else "Already queued or downloaded",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            },
+            onShare = {
+                val send = Intent(Intent.ACTION_SEND)
+                    .setType("text/plain")
+                    .putExtra(Intent.EXTRA_TEXT, "https://youtu.be/${item.id}")
+                context.startActivity(Intent.createChooser(send, item.title))
+            },
+            onDismiss = { showTrackMenu = false },
+        )
     }
 }
 
