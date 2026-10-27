@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.thinker.flashtube"
+    namespace = "com.tensei.ytxtube"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.thinker.flashtube"
+        applicationId = "com.tensei.ytxtube"
         minSdk = 26
         targetSdk = 36
         versionCode = 100
