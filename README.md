@@ -1,19 +1,20 @@
 # YTXTube
 
-An enhanced fork of [FlashTube](https://github.com/justathinker/flashtube) with more features and fixes.
+A lightweight YouTube and YouTube Music client featuring a modern Liquid Glass UI, ad-free playback, and high-quality downloads.
 
-## What works
+Forked from [FlashTube](https://github.com/justathinker/flashtube).
 
-- YouTube videos, Shorts, and music playback
-- Search, channels, playlists, and comments
-- Video and audio downloads, including background playback
-- Account sign-in, history, and subscriptions
-- SponsorBlock and playback speed controls
+## Features
+
+- Modern Liquid Glass UI
+- Ad-free YouTube and YouTube Music playback
+- High-quality video and audio downloads
+- YouTube videos, Shorts, and music
+- Search, channels, and playlists
+- Background playback
 
 ## Download
 
 [Download YTXTube.apk](https://github.com/Koustubh12345/YTXTube/releases/latest/download/YTXTube.apk)
-
-Original project: [justathinker/flashtube](https://github.com/justathinker/flashtube)
 
 Licensed under GPLv3. See [LICENSE](LICENSE).
