@@ -1,4 +1,4 @@
-﻿package com.tensei.ytxtube
+package com.tensei.ytxtube
 
 import android.widget.Toast
 import androidx.compose.foundation.background
@@ -12,11 +12,14 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -133,8 +136,15 @@ fun DownloadQualitySheet(video: VideoItem, onDownloadStarted: ((String) -> Unit)
                     modifier = Modifier.padding(vertical = 16.dp),
                 )
                 else -> {
-                    options!!.forEach { option ->
-                        QualityChoiceRow(option, selected == option.height) { selected = option.height }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 280.dp)
+                            .verticalScroll(rememberScrollState()),
+                    ) {
+                        options!!.forEach { option ->
+                            QualityChoiceRow(option, selected == option.height) { selected = option.height }
+                        }
                     }
                     Spacer(Modifier.height(18.dp))
                     val choice = options!!.firstOrNull { it.height == selected }

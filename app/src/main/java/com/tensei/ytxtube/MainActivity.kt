@@ -2,6 +2,7 @@ package com.tensei.ytxtube
 
 import android.Manifest
 import android.app.Activity
+import android.content.Intent
 import android.content.res.Configuration
 import android.content.pm.PackageManager
 import android.os.Build
@@ -120,6 +121,9 @@ import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
+    internal var playerHolder: PlayerState? = null
+    internal var pipController: PipController? = null
+    internal var intentHandler: ((Intent) -> Unit)? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -137,6 +141,21 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         setHighestRefreshRate()
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        val p = playerHolder
+        val pip = pipController
+        if (pip?.supported == true && p != null && p.isPlaying && !p.isMusicMode) {
+            pip.enter(p.videoAspect.takeIf { it > 0 } ?: (16f / 9f))
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        intentHandler?.invoke(intent)
     }
 
     private fun setHighestRefreshRate() {
@@ -290,11 +309,63 @@ fun YtxTubeApp() {
 
 
     val activity = LocalContext.current as Activity
+    val mainActivity = activity as? MainActivity
     val orientation = rememberOrientationController(activity)
     val playerOpen = player.current != null && player.expanded
 
     orientation.Bind(playerOpen && !AudioOnly.enabled && !player.isMusicMode)
     val pip = remember(activity) { PipController(activity as ComponentActivity) }
+
+    SideEffect {
+        mainActivity?.playerHolder = player
+        mainActivity?.pipController = pip
+    }
+
+    LaunchedEffect(player.isPlaying, player.isMusicMode, player.videoAspect) {
+        if (player.isPlaying && !player.isMusicMode) {
+            pip.updateAutoPip(true, player.videoAspect.takeIf { it > 0 } ?: (16f / 9f))
+        } else {
+            pip.updateAutoPip(false)
+        }
+    }
+
+    fun handleIntent(inIntent: Intent?) {
+        val target = parseIncomingIntent(inIntent) ?: return
+        if (target.isShort) {
+            shortsEntry = VideoItem(
+                id = target.videoId,
+                title = "",
+                channel = "",
+                channelUrl = null,
+                thumbnail = "https://i.ytimg.com/vi/${target.videoId}/hqdefault.jpg",
+                avatar = null,
+                durationSec = 0L,
+                views = 0L,
+                uploaded = null,
+            )
+        } else {
+            player.open(
+                VideoItem(
+                    id = target.videoId,
+                    title = "",
+                    channel = "",
+                    channelUrl = null,
+                    thumbnail = "https://i.ytimg.com/vi/${target.videoId}/hqdefault.jpg",
+                    avatar = null,
+                    durationSec = 0L,
+                    views = 0L,
+                    uploaded = null,
+                )
+            )
+            player.expanded = true
+        }
+    }
+
+    DisposableEffect(mainActivity) {
+        mainActivity?.intentHandler = { handleIntent(it) }
+        handleIntent(mainActivity?.intent)
+        onDispose { mainActivity?.intentHandler = null }
+    }
 
     pip.Bind(onClosed = { player.controller?.pause() })
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
@@ -339,6 +410,18 @@ fun YtxTubeApp() {
     BackHandler(enabled = showFullscreen) { exitFullscreen() }
     BackHandler(enabled = shortsEntry != null) { shortsEntry = null }
     BackHandler(enabled = updateState.visible) { updateState.dismiss() }
+
+    val canHandleRootBack = !player.expanded && !openSettings && !openAllSubscriptions &&
+        tab == Tab.Home && openPlaylist == null && openChannel == null &&
+        !openSearch && !signingIn && !showFullscreen && shortsEntry == null && !updateState.visible
+    BackHandler(enabled = canHandleRootBack && player.isPlaying) {
+        if (!player.isMusicMode && pip.supported) {
+            val entered = pip.enter(player.videoAspect.takeIf { it > 0 } ?: (16f / 9f))
+            if (!entered) activity.moveTaskToBack(true)
+        } else {
+            activity.moveTaskToBack(true)
+        }
+    }
 
     val density = LocalDensity.current
 
@@ -546,7 +629,7 @@ fun YtxTubeApp() {
             SettingsScreen(
                 onBack = { openSettings = false },
                 onSignIn = { signingIn = true },
-                onSignedOut = { lib.reset(); player.refreshAccountState() },
+                onSignedOut = { lib.reset(); lib.home.refresh(); player.refreshAccountState() },
                 contentPadding = contentPadding,
                 onCheckUpdate = { updateState.check(manual = true) },
             )
@@ -687,7 +770,13 @@ fun YtxTubeApp() {
 
         if (signingIn) {
             SignInScreen(
-                onDone = { signingIn = false; lib.reset(); player.refreshAccountState() },
+                onDone = {
+                    signingIn = false
+                    lib.reset()
+                    lib.home.refresh()
+                    lib.loadChannels()
+                    player.refreshAccountState()
+                },
                 onCancel = { signingIn = false },
             )
         }
@@ -916,4 +1005,31 @@ private fun NavPill(selected: Tab, onSelect: (Tab) -> Unit, modifier: Modifier =
             }
         }
     }
+}
+
+internal data class YouTubeLinkTarget(val videoId: String, val isShort: Boolean)
+
+internal fun parseIncomingIntent(intent: Intent?): YouTubeLinkTarget? {
+    if (intent == null) return null
+    val raw = when (intent.action) {
+        Intent.ACTION_SEND -> intent.getStringExtra(Intent.EXTRA_TEXT)
+        Intent.ACTION_VIEW -> intent.dataString
+        else -> intent.dataString ?: intent.getStringExtra(Intent.EXTRA_TEXT)
+    } ?: return null
+    return parseYouTubeLink(raw)
+}
+
+internal fun parseYouTubeLink(text: String): YouTubeLinkTarget? {
+    if (text.isBlank()) return null
+    val urlRegex = Regex("""(?i)\b(?:https?://|vnd\.youtube:)?(?:(?:www\.|m\.)?youtube\.com/(?:watch\?(?:.*&)?v=|shorts/|live/|embed/|v/)|youtu\.be/)([\w-]{11})""")
+    val match = urlRegex.find(text)
+    if (match != null) {
+        val videoId = match.groupValues[1]
+        val isShort = text.contains("/shorts/", ignoreCase = true)
+        return YouTubeLinkTarget(videoId, isShort)
+    }
+    if (text.matches(Regex("""^[\w-]{11}$"""))) {
+        return YouTubeLinkTarget(text, false)
+    }
+    return null
 }

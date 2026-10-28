@@ -228,9 +228,24 @@ object LiveChatFeed {
                     }
                 }
 
+                "sendLiveChatMessageEndpoint",
+                "liveChatSendMessageEndpoint",
                 "liveChatSendMessageCommand" -> {
                     if (sendParams == null) {
                         sendParams = obj.optString("params").ifBlank { null }
+                    }
+                }
+
+                "liveChatMessageInputRenderer" -> {
+                    if (sendParams == null) {
+                        val endpoint = obj.optJSONObject("sendButton")
+                            ?.optJSONObject("buttonRenderer")
+                            ?.optJSONObject("serviceEndpoint")
+                            ?.let {
+                                it.optJSONObject("sendLiveChatMessageEndpoint")
+                                    ?: it.optJSONObject("liveChatSendMessageEndpoint")
+                            }
+                        sendParams = endpoint?.optString("params")?.ifBlank { null }
                     }
                 }
 
@@ -265,9 +280,24 @@ object LiveChatFeed {
                     next = firstContinuation(obj.optJSONArray("continuations")) ?: next
                 }
 
+                "sendLiveChatMessageEndpoint",
+                "liveChatSendMessageEndpoint",
                 "liveChatSendMessageCommand" -> {
                     if (sendParams == null) {
                         sendParams = obj.optString("params").ifBlank { null }
+                    }
+                }
+
+                "liveChatMessageInputRenderer" -> {
+                    if (sendParams == null) {
+                        val endpoint = obj.optJSONObject("sendButton")
+                            ?.optJSONObject("buttonRenderer")
+                            ?.optJSONObject("serviceEndpoint")
+                            ?.let {
+                                it.optJSONObject("sendLiveChatMessageEndpoint")
+                                    ?: it.optJSONObject("liveChatSendMessageEndpoint")
+                            }
+                        sendParams = endpoint?.optString("params")?.ifBlank { null }
                     }
                 }
             }
@@ -276,9 +306,7 @@ object LiveChatFeed {
     }
 
     /**
-     * Posts a chat message. The `params` blob is the protobuf `LiveMessageParams`:
-     * params { ids { channel_id, video_id } }, number_0 = 1, number_1 = 4.
-     * YouTube expects it double-base64 encoded with a percent-encoded inner layer.
+     * Posts a chat message to YouTube's live chat endpoint.
      */
     internal fun send(
         videoId: String,
@@ -299,6 +327,12 @@ object LiveChatFeed {
                 ),
             )
         val root = InnerTube.post("live_chat/send_message", body)
+        if (root.has("error")) {
+            val err = root.optJSONObject("error")
+            val msg = err?.optString("message") ?: "YouTube could not send your message"
+            throw IOException(msg)
+        }
+        var errorMsg: String? = null
         val out = ArrayList<LiveChatMessage>()
         root.walk { key, obj ->
             if (key == "liveChatTextMessageRenderer" ||
@@ -306,7 +340,12 @@ object LiveChatFeed {
                 key == "liveChatMembershipItemRenderer"
             ) {
                 parseMessage(obj)?.let(out::add)
+            } else if (key == "liveChatActionErrorRenderer" || key == "showLiveChatActionErrorAction") {
+                errorMsg = obj.text("errorText") ?: obj.optString("errorText").ifBlank { null }
             }
+        }
+        if (errorMsg != null) {
+            throw IOException(errorMsg)
         }
         return out.distinctBy { it.id }
     }
@@ -322,11 +361,7 @@ object LiveChatFeed {
             write(protoVarintField(2, 1L))
             write(protoVarintField(3, 4L))
         }.toByteArray()
-        val inner = Base64.encodeToString(root, Base64.NO_WRAP)
-        return Base64.encodeToString(
-            URLEncoder.encode(inner, "UTF-8").toByteArray(Charsets.UTF_8),
-            Base64.NO_WRAP,
-        )
+        return Base64.encodeToString(root, Base64.NO_WRAP)
     }
 
     private fun protoVarint(value: Long): ByteArray {

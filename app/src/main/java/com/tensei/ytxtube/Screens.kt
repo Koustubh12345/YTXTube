@@ -172,8 +172,9 @@ fun HomeScreen(
 ) {
     val signedIn = Account.signedIn
     var activeFilter by remember { mutableStateOf(HomeFilter.All) }
-    LaunchedEffect(Unit) {
+    LaunchedEffect(signedIn) {
         if (lib.home.videos.isEmpty()) lib.home.ensureLoaded()
+        if (signedIn && lib.channels.isEmpty()) lib.loadChannels()
     }
     LaunchedEffect(activeFilter) {
         if (activeFilter == HomeFilter.Subscribed && lib.channels.isEmpty()) {

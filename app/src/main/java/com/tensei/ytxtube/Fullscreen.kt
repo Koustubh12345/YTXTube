@@ -146,6 +146,21 @@ class PipController(private val activity: ComponentActivity) {
         return activity.enterPictureInPictureMode(params)
     }
 
+    fun updateAutoPip(enabled: Boolean, videoAspect: Float = 16f / 9f) {
+        if (!supported) return
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            val ratio = videoAspect.coerceIn(0.42f, 2.38f)
+            val params = PictureInPictureParams.Builder()
+                .setAutoEnterEnabled(enabled)
+                .setAspectRatio(Rational((ratio * 1000).toInt(), 1000))
+                .apply {
+                    videoBounds?.let { b -> setSourceRectHint(android.graphics.Rect(b.left.toInt(), b.top.toInt(), b.right.toInt(), b.bottom.toInt())) }
+                }
+                .build()
+            activity.setPictureInPictureParams(params)
+        }
+    }
+
     @Composable
     fun Bind(onClosed: () -> Unit) {
         DisposableEffect(activity) {

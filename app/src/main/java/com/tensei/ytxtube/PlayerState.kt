@@ -668,6 +668,23 @@ class PlayerState(private val scope: CoroutineScope) {
         QualityPreference.set(height)
         val player = controller ?: return
         val item = details?.item ?: current ?: return
+
+        runCatching {
+            val builder = player.trackSelectionParameters.buildUpon()
+            if (height != null) {
+                builder.setMaxVideoSize(Int.MAX_VALUE, height)
+                builder.setMinVideoSize(0, (height - 1).coerceAtLeast(0))
+            } else {
+                builder.clearVideoSizeConstraints()
+            }
+            player.trackSelectionParameters = builder.build()
+        }
+
+        if (item.isLive) {
+            details = details?.copy(quality = height?.let { "${it}p" } ?: "Live")
+            return
+        }
+
         val position = player.currentPosition
         val playWhenReady = player.playWhenReady
         replaceCurrent(player, item, position)
@@ -997,6 +1014,25 @@ class PlayerState(private val scope: CoroutineScope) {
         override fun onPlayerError(e: PlaybackException) {
             val status = (e.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
             Log.w(TAG, "playback error ${e.errorCodeName}${status?.let { " (HTTP $it)" } ?: ""} for ${current?.id}", e)
+
+            // If captions are enabled and an error occurs (such as subtitle 403 or parse failure),
+            // disable the subtitle track so the video continues playing uninterrupted
+            if (CaptionPreference.enabled) {
+                CaptionPreference.set(false)
+                captionText = null
+                actionMessage = "Captions unavailable for this video"
+                runCatching {
+                    controller?.let { p ->
+                        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                            .build()
+                        p.prepare()
+                        p.play()
+                    }
+                }
+                return
+            }
 
             if (e.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && StreamRecovery.recovering == current?.id) return
             error = when (e.errorCode) {

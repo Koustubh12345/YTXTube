@@ -30,6 +30,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.MoreVert
+import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material.icons.rounded.Verified
 import androidx.compose.material3.Icon
@@ -154,15 +155,26 @@ fun BackScreenHeader(
 
 @Composable
 fun BrandMark() {
-    val c = MaterialTheme.colorScheme
     Box(
         modifier = Modifier
             .size(width = 34.dp, height = 24.dp)
             .clip(RoundedCornerShape(8.dp))
-            .background(Brush.linearGradient(listOf(c.primary, c.primary.copy(alpha = 0.85f)))),
+            .background(Brush.linearGradient(listOf(Color(0xFFFF0033), Color(0xFFD60029)))),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(Icons.Rounded.FastForward, contentDescription = null, tint = c.onPrimary, modifier = Modifier.size(16.dp))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 2.dp, height = 8.5.dp)
+                    .clip(CircleShape)
+                    .background(Color.White),
+            )
+            Spacer(Modifier.width(2.5.dp))
+            Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
+        }
     }
 }
 

@@ -678,11 +678,24 @@ object StreamSelection {
             .sortedBy { it.tier() }
     }
 
-    fun heights(info: StreamInfo): List<Int> = info.videoOnlyStreams
-        .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 }
-        .map { it.tier() }
-        .distinct()
-        .sortedDescending()
+    fun heights(info: StreamInfo): List<Int> {
+        val progressive = info.videoOnlyStreams
+            .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 }
+            .map { it.tier() }
+        if (progressive.isNotEmpty()) {
+            return progressive.distinct().sortedDescending()
+        }
+        val muxed = info.videoStreams
+            .filter { it.isUrl && it.height > 0 }
+            .map { it.tier() }
+        if (muxed.isNotEmpty()) {
+            return muxed.distinct().sortedDescending()
+        }
+        if (info.streamType == StreamType.LIVE_STREAM || !info.hlsUrl.isNullOrBlank()) {
+            return listOf(1080, 720, 480, 360, 240, 144)
+        }
+        return emptyList()
+    }
 }
 
 

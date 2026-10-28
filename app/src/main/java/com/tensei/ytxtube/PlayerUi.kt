@@ -593,26 +593,26 @@ private fun SubscribeButton(subscribed: Boolean, onClick: () -> Unit) {
     val reduced = rememberReducedMotion()
 
 
-    val radius by animateDpAsState(if (subscribed) 16.dp else 22.dp, if (reduced) tween(0) else spring(dampingRatio = 0.6f, stiffness = 500f), label = "subShape")
+    val radius by animateDpAsState(if (subscribed) 14.dp else 18.dp, if (reduced) tween(0) else spring(dampingRatio = 0.6f, stiffness = 500f), label = "subShape")
     Row(
         modifier = Modifier
             .squishOn(subscribed)
-            .height(44.dp)
+            .height(34.dp)
             .pressable(onClick = onClick)
             .clip(RoundedCornerShape(radius))
             .background(if (subscribed) c.secondaryContainer else c.onSurface)
             .animateContentSize(spring(dampingRatio = 0.7f, stiffness = 500f))
-            .padding(horizontal = if (subscribed) 14.dp else 20.dp),
+            .padding(horizontal = if (subscribed) 10.dp else 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (subscribed) {
-            FlourishIcon(Icons.Rounded.NotificationsActive, null, active = subscribed, kind = Flourish.Ring, tint = c.onSecondaryContainer, size = 18.dp)
-            Spacer(Modifier.width(6.dp))
+            FlourishIcon(Icons.Rounded.NotificationsActive, null, active = subscribed, kind = Flourish.Ring, tint = c.onSecondaryContainer, size = 15.dp)
+            Spacer(Modifier.width(5.dp))
         }
         Text(
             if (subscribed) "Subscribed" else "Subscribe",
             color = if (subscribed) c.onSecondaryContainer else c.surface,
-            fontWeight = FontWeight.ExtraBold, fontSize = 14.sp,
+            fontWeight = FontWeight.Bold, fontSize = 12.5.sp,
         )
     }
 }
@@ -1641,22 +1641,6 @@ private fun SyncedLyrics(
             }
         }
 
-        // Soft edges so upcoming and finished lines dissolve instead of being cut off.
-        val fade = c.surfaceContainerHigh.copy(alpha = 0.82f)
-        Box(
-            Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .height(30.dp)
-                .background(Brush.verticalGradient(listOf(fade, fade.copy(alpha = 0f)))),
-        )
-        Box(
-            Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .height(30.dp)
-                .background(Brush.verticalGradient(listOf(fade.copy(alpha = 0f), fade))),
-        )
     }
 }
 
