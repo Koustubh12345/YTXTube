@@ -16,7 +16,7 @@ object RecentMusic {
     private const val MAX = 30
 
     private val prefs by lazy {
-        FlashTubeApplication.appContext.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
+        YTXTubeApplication.appContext.getSharedPreferences(PREFS, android.content.Context.MODE_PRIVATE)
     }
 
     var items by mutableStateOf<List<VideoItem>>(emptyList())

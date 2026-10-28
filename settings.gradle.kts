@@ -17,5 +17,5 @@ dependencyResolutionManagement {
         maven("https://jitpack.io")
     }
 }
-rootProject.name = "FlashTube"
+rootProject.name = "YTXTube"
 include(":app")

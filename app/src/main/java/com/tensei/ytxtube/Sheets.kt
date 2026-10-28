@@ -248,7 +248,7 @@ fun AppearanceSettings() {
         Spacer(Modifier.height(14.dp))
         val choices = buildList {
             if (ThemeSettings.wallpaperAvailable) add(null to "Wallpaper")
-            FLASHTUBE_THEMES.forEach { add(it.hex to it.name) }
+            YTX_THEMES.forEach { add(it.hex to it.name) }
         }
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             choices.forEach { (hex, name) ->

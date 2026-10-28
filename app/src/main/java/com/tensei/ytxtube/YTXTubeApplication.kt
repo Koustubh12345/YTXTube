@@ -9,7 +9,7 @@ import com.tensei.ytxtube.potoken.PoTokenGenerator
 import org.schabi.newpipe.extractor.NewPipe
 import org.schabi.newpipe.extractor.services.youtube.extractors.YoutubeStreamExtractor
 
-class FlashTubeApplication : Application(), ImageLoaderFactory {
+class YTXTubeApplication : Application(), ImageLoaderFactory {
 
     companion object {
         lateinit var appContext: Context
@@ -19,12 +19,13 @@ class FlashTubeApplication : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         appContext = applicationContext
+        TvMode.init(this)
         NewPipe.init(NewPipeDownloader.instance)
 
 
         val poTokenGenerator = PoTokenGenerator()
         poTokenGenerator.initialize()
-        YoutubeStreamExtractor.setPoTokenProvider(FlashtubePoTokenProvider(poTokenGenerator))
+        YoutubeStreamExtractor.setPoTokenProvider(YtxPoTokenProvider(poTokenGenerator))
 
 
         YoutubeStreamExtractor.setFetchIosClient(true)
@@ -32,6 +33,8 @@ class FlashTubeApplication : Application(), ImageLoaderFactory {
         QualityPreference.init(this)
         PlaybackSpeed.init(this)
         AudioOnly.init(this)
+        AudioTrackPreference.init(this)
+        CaptionPreference.init(this)
         ResumeStore.init(this)
         Account.init(this)
         SponsorBlock.init(this)

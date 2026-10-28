@@ -14,6 +14,7 @@ import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -47,6 +48,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.CircleShape
@@ -60,6 +62,7 @@ import androidx.compose.material.icons.rounded.BrightnessMedium
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.CropFree
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.ErrorOutline
 import androidx.compose.material.icons.rounded.FastForward
 import androidx.compose.material.icons.rounded.FastRewind
@@ -80,6 +83,7 @@ import androidx.compose.material.icons.rounded.Replay10
 import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.SkipNext
 import androidx.compose.material.icons.rounded.Speed
+import androidx.compose.material.icons.rounded.Subtitles
 import androidx.compose.material.icons.rounded.ZoomIn
 import androidx.compose.ui.composed
 import androidx.compose.ui.graphics.luminance
@@ -87,6 +91,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -116,12 +122,18 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -166,7 +178,8 @@ fun VideoContent(
     fun touched() { touchedAt = System.nanoTime() }
     SideEffect { state.videoControlsVisible = controlsVisible }
     LaunchedEffect(controlsVisible, state.isPlaying, touchedAt) {
-        if (controlsVisible && state.isPlaying) {
+        // A TV remote has no way to bring hidden controls back on its own, so they stay up.
+        if (controlsVisible && state.isPlaying && !TvMode.isTv) {
             delay(Motion.ControlsHideMs)
             controlsVisible = false
         }
@@ -223,6 +236,7 @@ fun VideoContent(
     }
 
     val pip = LocalPictureInPicture.current
+    val videoBackdrop = rememberLayerBackdrop()
     val view = LocalView.current
     val currentView by rememberUpdatedState(view)
     val fullscreenControlsScrub = fullscreen && !portraitEdgeScrub
@@ -236,7 +250,42 @@ fun VideoContent(
     LaunchedEffect(state.current?.id) {
         state.current?.id?.let { ScrubStoryboards.preload(it) }
     }
-    Box(modifier.background(Color.Black).onGloballyPositioned { pip?.videoBounds = it.boundsInWindow() }.pointerInput(state, portraitEdgeScrub) {
+    val tvKeys = Modifier.onPreviewKeyEvent { e ->
+        if (!TvMode.isTv || !interactive || e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        when (e.key) {
+            Key.MediaPlayPause, Key.MediaPlay, Key.MediaPause -> {
+                state.togglePlay()
+                controlsVisible = true
+                touched()
+                true
+            }
+            Key.MediaNext, Key.MediaFastForward -> {
+                state.seekBy(10_000)
+                controlsVisible = true
+                touched()
+                true
+            }
+            Key.MediaPrevious, Key.MediaRewind -> {
+                state.seekBy(-10_000)
+                controlsVisible = true
+                touched()
+                true
+            }
+            else -> {
+                val dpad = e.key == Key.DirectionUp || e.key == Key.DirectionDown ||
+                    e.key == Key.DirectionLeft || e.key == Key.DirectionRight ||
+                    e.key == Key.DirectionCenter || e.key == Key.Enter || e.key == Key.NumPadEnter
+                if (dpad && !controlsVisible) {
+                    controlsVisible = true
+                    touched()
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+    Box(modifier.background(Color.Black).then(tvKeys).onGloballyPositioned { pip?.videoBounds = it.boundsInWindow() }.pointerInput(state, portraitEdgeScrub) {
         val doubleTapMs = viewConfiguration.doubleTapTimeoutMillis
         val holdSpeedMs = Motion.HoldSpeedMs
         coroutineScope {
@@ -400,6 +449,7 @@ fun VideoContent(
             Box(
                 Modifier
                     .fillMaxSize()
+                    .layerBackdrop(videoBackdrop)
                     .aspectFit(state.videoAspect, cover = state.zoomToFill)
                     .graphicsLayer {
                         val n = nudge.value
@@ -512,7 +562,11 @@ fun VideoContent(
             Box(Modifier.fillMaxSize().then(edge)) {
 
                 Row(
-                    Modifier.align(Alignment.TopStart).fillMaxWidth().padding(horizontal = 10.dp, vertical = 8.dp),
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .fillMaxWidth()
+                        .then(if (fullscreen) Modifier.statusBarsPadding() else Modifier)
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (fullscreen) {
@@ -556,7 +610,7 @@ fun VideoContent(
                     if (pip?.supported == true) {
                         GlassButton(Icons.Rounded.PictureInPictureAlt, "Picture-in-picture", enabled, size = 32.dp, iconSize = 18.dp) {
                             controlsVisible = false
-                            if (!pip.enter(state.videoAspect)) state.actionMessage = "Picture-in-picture is turned off for FlashTube in Settings."
+                            if (!pip.enter(state.videoAspect)) state.actionMessage = "Picture-in-picture is turned off for YTXTube in Settings."
                         }
                         Spacer(Modifier.width(6.dp))
                     }
@@ -569,23 +623,35 @@ fun VideoContent(
                 }
                 Row(
                     modifier = Modifier.align(Alignment.Center),
-                    horizontalArrangement = Arrangement.spacedBy(if (fullscreen) 56.dp else 30.dp),
+                    horizontalArrangement = Arrangement.spacedBy(if (fullscreen) 52.dp else 26.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    val skip = if (fullscreen) 56.dp else 48.dp
-                    GlassButton(Icons.Rounded.Replay10, "Back 10 seconds", enabled, size = skip, iconSize = skip * 0.62f) {
+                    val skip = if (fullscreen) 50.dp else 43.dp
+                    GlassButton(Icons.Rounded.Replay10, "Back 10 seconds", enabled, size = skip, iconSize = skip * 0.6f, backdrop = videoBackdrop) {
                         touched(); state.seekBy(-10_000)
                     }
+                    val playGlass = Modifier.liquidGlass(
+                        videoBackdrop,
+                        glassSpec(
+                            shape = CircleShape,
+                            tint = glassFill(0.5f),
+                            blur = 20.dp,
+                            refractionHeight = 12.dp,
+                            refractionAmount = 20.dp,
+                        ),
+                    )
                     MorphPlayButton(
                         playing = state.isPlaying,
                         buffering = state.isBuffering || (state.loading && state.details == null),
-                        size = if (fullscreen) 76.dp else 66.dp,
+                        size = if (fullscreen) 70.dp else 61.dp,
 
-                        container = Color.Black.copy(alpha = 0.38f),
+                        container = Color.Transparent,
                         content = Color.White,
                         enabled = enabled,
+                        backdrop = playGlass,
+                        glass = true,
                     ) { touched(); state.togglePlay() }
-                    GlassButton(Icons.Rounded.Forward10, "Forward 10 seconds", enabled, size = skip, iconSize = skip * 0.62f) {
+                    GlassButton(Icons.Rounded.Forward10, "Forward 10 seconds", enabled, size = skip, iconSize = skip * 0.6f, backdrop = videoBackdrop) {
                         touched(); state.seekBy(10_000)
                     }
                 }
@@ -625,6 +691,22 @@ fun VideoContent(
                     }
                 }
             }
+        }
+
+        val captionText = state.captionText
+        if (!scrubbing && captionText != null) {
+            val captionLift by animateDpAsState(
+                targetValue = if (controlsVisible) EdgeScrubTimeRowBottomPad + EdgeScrubTimeRowHeight + 10.dp else 20.dp,
+                animationSpec = if (reduced) tween(0) else tween(200, easing = Motion.Emphasized),
+                label = "captionLift",
+            )
+            CaptionOverlay(
+                text = captionText,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = captionLift),
+            )
         }
 
         if (state.error == null && (!fullscreenControlsScrub || controlsVisible || scrubbing)) {
@@ -1097,11 +1179,26 @@ fun PlayerSettingsSheet(state: PlayerState, backdrop: Backdrop, onDismiss: () ->
                     title = "Playback speed",
                     value = if (state.speed == 1f) "Normal (1.0×)" else "${state.speed}×",
                     onClick = {
-                        val speeds = listOf(1f, 1.25f, 1.5f, 2f, 0.75f)
-                        val idx = speeds.indexOf(state.speed)
-                        val next = speeds[(idx + 1).coerceAtLeast(0) % speeds.size]
-                        state.commitSpeed(next)
+                        onDismiss()
+                        state.sheet = PlayerSheet.Speed
                     }
+                )
+
+                PlayerSettingItem(
+                    icon = Icons.Rounded.Headphones,
+                    title = "Audio track",
+                    value = AudioTrackPreference.label.ifBlank { "Original" },
+                    onClick = {
+                        onDismiss()
+                        state.sheet = PlayerSheet.Audio
+                    }
+                )
+
+                PlayerSettingItem(
+                    icon = Icons.Rounded.Subtitles,
+                    title = "Captions",
+                    value = if (CaptionPreference.enabled) "On" else "Off",
+                    onClick = { state.setCaptions(!CaptionPreference.enabled) }
                 )
 
 
@@ -1206,6 +1303,7 @@ private fun GlassButton(
     size: Dp = 38.dp,
     iconSize: Dp = 22.dp,
     tinted: Boolean = true,
+    backdrop: Backdrop? = null,
     onClick: () -> Unit,
 ) {
     Box(
@@ -1213,12 +1311,48 @@ private fun GlassButton(
             .size(size)
             .pressable(enabled = enabled, onClick = onClick)
             .clip(CircleShape)
-            .background(if (tinted) Color.Black.copy(alpha = 0.38f) else Color.Black.copy(alpha = 0f)),
+            .then(
+                if (backdrop != null) {
+                    Modifier.liquidGlass(
+                        backdrop,
+                        glassSpec(
+                            shape = CircleShape,
+                            tint = glassFill(0.42f),
+                            blur = 16.dp,
+                            refractionHeight = 9.dp,
+                            refractionAmount = 15.dp,
+                        ),
+                    )
+                } else {
+                    Modifier.background(if (tinted) Color.Black.copy(alpha = 0.38f) else Color.Transparent)
+                },
+            ),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, description, tint = Color.White, modifier = Modifier.size(iconSize)) }
 }
 
 private const val SeekStepMs = 10_000L
+
+/** YouTube-style caption plate: black rounded box, white centred text, no chrome. */
+@Composable
+private fun CaptionOverlay(text: String, modifier: Modifier = Modifier) {
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(7.dp))
+            .background(Color.Black.copy(alpha = 0.72f))
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = text,
+            color = Color.White,
+            fontSize = 15.sp,
+            lineHeight = 20.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center,
+        )
+    }
+}
 
 private const val SeekBurstWindowMs = 600L
 
@@ -1317,6 +1451,7 @@ fun MorphPlayButton(
     content: Color,
     enabled: Boolean = true,
     backdrop: Modifier = Modifier,
+    glass: Boolean = false,
     onClick: () -> Unit,
 ) {
     val reduced = rememberReducedMotion()
@@ -1325,13 +1460,19 @@ fun MorphPlayButton(
         animationSpec = if (reduced) tween(0) else spring(dampingRatio = 0.6f, stiffness = 500f),
         label = "playShape",
     )
+    val shape = RoundedCornerShape(radius)
     Box(
         modifier = Modifier
             .size(size)
             .pressable(enabled = enabled, onClick = onClick)
-            .clip(RoundedCornerShape(radius))
+            .clip(shape)
             .then(backdrop)
-            .background(container),
+            .then(
+                if (glass) Modifier
+                else Modifier
+                    .border(1.2.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.65f), Color.White.copy(alpha = 0.20f))), shape)
+                    .background(container),
+            ),
         contentAlignment = Alignment.Center,
     ) {
         if (buffering) {

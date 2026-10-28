@@ -154,7 +154,7 @@ object CommentPosting {
     private fun checkPosted(response: JSONObject) {
         val text = response.toString()
         if ("STATUS_FAILED" in text || !(text.contains("createCommentAction") || text.contains("createCommentReplyAction") || text.contains("STATUS_SUCCEEDED"))) {
-            Log.w("FlashTube", "comment post response: ${text.take(600)}")
+            Log.w("YTXTube", "comment post response: ${text.take(600)}")
             throw IOException("YouTube didn't accept the comment.")
         }
     }

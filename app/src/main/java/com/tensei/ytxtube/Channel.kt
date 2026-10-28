@@ -1,6 +1,14 @@
 package com.tensei.ytxtube
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -18,6 +26,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.CloudOff
@@ -38,6 +47,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,6 +61,7 @@ val LocalChannelOpener = staticCompositionLocalOf<(String) -> Unit> { {} }
 
 enum class ChannelTab(val label: String) {
     Videos("Videos"),
+    Shorts("Shorts"),
     Live("Live"),
     Community("Community"),
 }
@@ -73,12 +84,17 @@ class ChannelState(val url: String, private val scope: CoroutineScope) {
         private set
     var liveLoading by mutableStateOf(false)
         private set
+    var shorts by mutableStateOf<List<VideoItem>>(emptyList())
+        private set
+    var shortsLoading by mutableStateOf(false)
+        private set
     var communityPosts by mutableStateOf<List<CommunityPost>>(emptyList())
         private set
     var communityLoading by mutableStateOf(false)
         private set
 
     private var next: String? = null
+    private var shortsNext: String? = null
     val hasMore get() = next != null
 
     init { load() }
@@ -86,6 +102,7 @@ class ChannelState(val url: String, private val scope: CoroutineScope) {
     fun selectTab(tab: ChannelTab) {
         activeTab = tab
         when (tab) {
+            ChannelTab.Shorts -> if (shorts.isEmpty() && !shortsLoading) loadShorts()
             ChannelTab.Live -> if (liveVideos.isEmpty() && !liveLoading) loadLive()
             ChannelTab.Community -> if (communityPosts.isEmpty() && !communityLoading) loadCommunity()
             ChannelTab.Videos -> {}
@@ -130,6 +147,36 @@ class ChannelState(val url: String, private val scope: CoroutineScope) {
                     liveVideos = videos.filter { it.isLive }
                 }
             liveLoading = false
+        }
+    }
+
+    fun loadShorts() {
+        val d = details ?: return
+        if (shortsLoading) return
+        shortsLoading = true
+        scope.launch {
+            runCatching { YouTube.channelShorts(d, null) }
+                .onSuccess { p ->
+                    shorts = p.videos
+                    shortsNext = p.next
+                }
+            shortsLoading = false
+        }
+    }
+
+    fun loadMoreShorts() {
+        val d = details ?: return
+        val page = shortsNext ?: return
+        if (shortsLoading) return
+        shortsLoading = true
+        scope.launch {
+            runCatching { YouTube.channelShorts(d, page) }
+                .onSuccess { p ->
+                    val seen = shorts.mapTo(HashSet()) { it.id }
+                    shorts = shorts + p.videos.filter { seen.add(it.id) }
+                    shortsNext = p.next
+                }
+            shortsLoading = false
         }
     }
 
@@ -187,28 +234,42 @@ fun ChannelTabStrip(selected: ChannelTab, onSelect: (ChannelTab) -> Unit, modifi
     ) {
         ChannelTab.entries.forEach { tab ->
             val isSelected = tab == selected
+            val background by animateColorAsState(
+                targetValue = when {
+                    isSelected -> if (isDark || isAmoled) Color.White else Color.Black
+                    isAmoled -> Color(0xFF161616)
+                    isDark -> Color(0xFF272727)
+                    else -> Color(0xFFE5E5E5)
+                },
+                animationSpec = tween(220, easing = Motion.Emphasized),
+                label = "channelTabBackground",
+            )
+            val foreground by animateColorAsState(
+                targetValue = when {
+                    isSelected -> if (isDark || isAmoled) Color.Black else Color.White
+                    isDark || isAmoled -> Color.White
+                    else -> Color(0xFF0F0F0F)
+                },
+                animationSpec = tween(180, easing = Motion.Emphasized),
+                label = "channelTabForeground",
+            )
+            val scale by animateFloatAsState(
+                targetValue = if (isSelected) 1f else 0.94f,
+                animationSpec = spring(dampingRatio = 0.7f, stiffness = 700f),
+                label = "channelTabScale",
+            )
             Box(
                 modifier = Modifier
+                    .graphicsLayer { scaleX = scale; scaleY = scale }
                     .clip(RoundedCornerShape(8.dp))
-                    .background(
-                        when {
-                            isSelected -> if (isDark || isAmoled) Color.White else Color.Black
-                            isAmoled -> Color(0xFF161616)
-                            isDark -> Color(0xFF272727)
-                            else -> Color(0xFFE5E5E5)
-                        }
-                    )
+                    .background(background)
                     .pressable(pressedScale = 0.94f) { onSelect(tab) }
                     .padding(horizontal = 14.dp, vertical = 7.dp),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
                     tab.label,
-                    color = when {
-                        isSelected -> if (isDark || isAmoled) Color.Black else Color.White
-                        isDark || isAmoled -> Color.White
-                        else -> Color(0xFF0F0F0F)
-                    },
+                    color = foreground,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
                 )
@@ -218,13 +279,27 @@ fun ChannelTabStrip(selected: ChannelTab, onSelect: (ChannelTab) -> Unit, modifi
 }
 
 @Composable
-fun ChannelScreen(state: ChannelState, contentPadding: PaddingValues, onBack: () -> Unit, onOpen: (VideoItem) -> Unit, onMessage: (String) -> Unit) {
+fun ChannelScreen(
+    state: ChannelState,
+    contentPadding: PaddingValues,
+    onBack: () -> Unit,
+    onOpen: (VideoItem) -> Unit,
+    onOpenShort: (VideoItem) -> Unit,
+    onMessage: (String) -> Unit,
+) {
     val c = MaterialTheme.colorScheme
     val list = rememberLazyListState()
     val nearEnd by remember {
         derivedStateOf { (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= list.layoutInfo.totalItemsCount - 4 }
     }
-    LaunchedEffect(nearEnd, state.videos.size) { if (nearEnd && state.videos.isNotEmpty()) state.loadMore() }
+    LaunchedEffect(nearEnd, state.activeTab, state.videos.size, state.shorts.size) {
+        if (!nearEnd) return@LaunchedEffect
+        when (state.activeTab) {
+            ChannelTab.Videos -> if (state.videos.isNotEmpty()) state.loadMore()
+            ChannelTab.Shorts -> if (state.shorts.isNotEmpty()) state.loadMoreShorts()
+            else -> {}
+        }
+    }
     Box(Modifier.fillMaxSize().background(c.surface)) {
     CollapsingHeaderLayout(
         header = {
@@ -251,6 +326,11 @@ fun ChannelScreen(state: ChannelState, contentPadding: PaddingValues, onBack: ()
             }
             else -> LazyColumn(state = list, contentPadding = contentPadding.withTop(top)) {
                 item(key = "header") {
+                    AnimatedVisibility(
+                        visible = true,
+                        enter = fadeIn(tween(260, easing = Motion.Emphasized)) +
+                            slideInVertically(tween(320, easing = Motion.Emphasized)) { it / 8 },
+                    ) {
                     Column(Modifier.padding(horizontal = 16.dp)) {
                         if (d.banner != null) {
                             Thumbnail(d.banner, Modifier.fillMaxWidth().aspectRatio(5.6f), radius = 12)
@@ -279,16 +359,45 @@ fun ChannelScreen(state: ChannelState, contentPadding: PaddingValues, onBack: ()
                             Text(d.description, color = c.onSurfaceVariant, fontSize = 13.5.sp, lineHeight = 19.sp, maxLines = 3, overflow = TextOverflow.Ellipsis)
                         }
                     }
+                    }
                 }
                 item(key = "tabs") {
                     ChannelTabStrip(selected = state.activeTab, onSelect = { state.selectTab(it) })
                 }
                 when (state.activeTab) {
                     ChannelTab.Videos -> {
-                        items(state.videos, key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
+                        items(state.videos, key = { it.id }) { video ->
+                            VideoCard(video, onClick = { onOpen(video) }, modifier = Modifier.animateItem())
+                        }
                         if (state.loading || state.hasMore) item {
                             Box(Modifier.fillMaxWidth().padding(28.dp), Alignment.Center) {
                                 CircularProgressIndicator(color = c.primary, strokeWidth = 4.dp, modifier = Modifier.size(32.dp))
+                            }
+                        }
+                    }
+                    ChannelTab.Shorts -> {
+                        if (state.shortsLoading && state.shorts.isEmpty()) {
+                            item {
+                                Box(Modifier.fillMaxWidth().padding(48.dp), Alignment.Center) {
+                                    CircularProgressIndicator(color = c.primary, strokeWidth = 4.dp, modifier = Modifier.size(32.dp))
+                                }
+                            }
+                        } else if (state.shorts.isEmpty()) {
+                            item {
+                                EmptyState(
+                                    Icons.Rounded.CloudOff,
+                                    "No Shorts yet",
+                                    "This channel hasn't posted any Shorts.",
+                                )
+                            }
+                        } else {
+                            items(state.shorts.chunked(3), key = { row -> row.first().id }) { row ->
+                                ShortsRow(row, onOpenShort, Modifier.animateItem())
+                            }
+                            if (state.shortsLoading) item {
+                                Box(Modifier.fillMaxWidth().padding(28.dp), Alignment.Center) {
+                                    CircularProgressIndicator(color = c.primary, strokeWidth = 4.dp, modifier = Modifier.size(32.dp))
+                                }
                             }
                         }
                     }
@@ -308,7 +417,9 @@ fun ChannelScreen(state: ChannelState, contentPadding: PaddingValues, onBack: ()
                                 )
                             }
                         } else {
-                            items(state.liveVideos, key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
+                            items(state.liveVideos, key = { it.id }) { video ->
+                                VideoCard(video, onClick = { onOpen(video) }, modifier = Modifier.animateItem())
+                            }
                         }
                     }
                     ChannelTab.Community -> {
@@ -340,6 +451,16 @@ fun ChannelScreen(state: ChannelState, contentPadding: PaddingValues, onBack: ()
 @Composable
 private fun ChannelSubscribeButton(subscribed: Boolean, onClick: () -> Unit) {
     val c = MaterialTheme.colorScheme
+    val container by animateColorAsState(
+        targetValue = if (subscribed) c.secondaryContainer else c.onSurface,
+        animationSpec = tween(240, easing = Motion.Emphasized),
+        label = "subscribeContainer",
+    )
+    val content by animateColorAsState(
+        targetValue = if (subscribed) c.onSecondaryContainer else c.surface,
+        animationSpec = tween(240, easing = Motion.Emphasized),
+        label = "subscribeContent",
+    )
     Row(
         Modifier
             .squishOn(subscribed)
@@ -347,14 +468,74 @@ private fun ChannelSubscribeButton(subscribed: Boolean, onClick: () -> Unit) {
             .height(46.dp)
             .pressable(onClick = onClick)
             .clip(CircleShape)
-            .background(if (subscribed) c.secondaryContainer else c.onSurface),
-        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.Center,
+            .background(container),
+        horizontalArrangement = Arrangement.Center,
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (subscribed) {
-            FlourishIcon(Icons.Rounded.NotificationsActive, null, active = true, kind = Flourish.Ring, tint = c.onSecondaryContainer, size = 18.dp)
+            FlourishIcon(Icons.Rounded.NotificationsActive, null, active = true, kind = Flourish.Ring, tint = content, size = 18.dp)
             Spacer(Modifier.width(6.dp))
         }
-        Text(if (subscribed) "Subscribed" else "Subscribe", color = if (subscribed) c.onSecondaryContainer else c.surface, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+        Text(if (subscribed) "Subscribed" else "Subscribe", color = content, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+    }
+}
+
+@Composable
+private fun ShortsRow(row: List<VideoItem>, onOpen: (VideoItem) -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        row.forEach { video -> ShortTile(video, Modifier.weight(1f), onOpen) }
+        repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+    }
+}
+
+@Composable
+private fun ShortTile(video: VideoItem, modifier: Modifier, onOpen: (VideoItem) -> Unit) {
+    Box(
+        modifier
+            .fillMaxWidth()
+            .aspectRatio(9f / 16f)
+            .clip(RoundedCornerShape(14.dp))
+            .pressable(pressedScale = 0.95f) { onOpen(video) },
+    ) {
+        Thumbnail(video.thumbnail, Modifier.fillMaxSize(), radius = 0, videoId = video.id)
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.verticalGradient(
+                        0.5f to Color.Transparent,
+                        1f to Color.Black.copy(alpha = 0.78f),
+                    ),
+                ),
+        )
+        Column(
+            Modifier
+                .align(Alignment.BottomStart)
+                .padding(9.dp),
+        ) {
+            Text(
+                video.title,
+                color = Color.White,
+                fontSize = 12.sp,
+                lineHeight = 15.sp,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            video.views.takeIf { it > 0 }?.let {
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    "${formatCount(it)} views",
+                    color = Color.White.copy(alpha = 0.82f),
+                    fontSize = 10.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
+        }
     }
 }

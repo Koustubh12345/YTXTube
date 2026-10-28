@@ -109,6 +109,7 @@ fun RowScope.LiquidBottomTab(
     val view = LocalView.current
     Column(
         modifier
+            .then(if (TvMode.isTv) Modifier.tvFocusRing(radius = 20.dp) else Modifier)
             .clip(Capsule())
             .clickable(
                 interactionSource = null,

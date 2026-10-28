@@ -1,12 +1,23 @@
 package com.tensei.ytxtube
 
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.view.KeyEvent
 import android.view.TextureView
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -21,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.VerticalPager
@@ -30,10 +42,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Comment
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material.icons.rounded.ThumbDown
@@ -50,6 +62,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,10 +71,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -71,41 +95,97 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.cache.CacheDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.MergingMediaSource
+import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.upstream.DefaultAllocator
 import coil.compose.AsyncImage
+import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.schabi.newpipe.extractor.stream.StreamInfo
+import kotlin.math.absoluteValue
 
 
 @Stable
-private class ShortsFeedState(private val scope: kotlinx.coroutines.CoroutineScope) {
-    var videos by mutableStateOf<List<VideoItem>>(emptyList())
+private class ShortsFeedState(
+    private val scope: kotlinx.coroutines.CoroutineScope,
+    private val seed: VideoItem? = null,
+) {
+    var videos by mutableStateOf(seed?.let { listOf(it) } ?: emptyList())
         private set
     var loading by mutableStateOf(false)
+        private set
+    var refreshing by mutableStateOf(false)
         private set
     var error by mutableStateOf<String?>(null)
         private set
     private var next: String? = null
     private var ended = false
+    private var loaded = false
+
+    /** Every clip this session has shown, so a refresh can never repeat one. */
+    private val seen = HashSet<String>()
 
     fun load() {
-        if (loading) return
+        if (loading || loaded) return
         loading = true
         error = null
         scope.launch {
             runCatching { InnerTube.shorts() }
-                .onSuccess {
-                    videos = it.videos
-                    next = it.next
-                    ended = it.next == null
+                .onSuccess { page ->
+                    videos = merge(page.videos)
+                    seen += videos.map { it.id }
+                    next = page.next
+                    ended = page.next == null
+                    loaded = true
                     if (videos.isEmpty()) error = "No Shorts found for this account."
                 }
                 .onFailure { error = YouTube.friendlyError(it) }
             loading = false
         }
+    }
+
+    /** Pull a brand new batch from the same personalised sources and start again from the top. */
+    fun refresh() {
+        if (refreshing || loading) return
+        refreshing = true
+        error = null
+        scope.launch {
+            val token = next
+            val page = runCatching { InnerTube.newShorts(seen, token) }.getOrNull()
+            if (page != null && page.videos.isNotEmpty()) {
+                val fresh = page.videos.filter { it.id !in seen }
+                if (fresh.isNotEmpty()) {
+                    videos = fresh
+                    seen += fresh.map { it.id }
+                    next = page.next ?: token
+                    ended = next == null
+                    loaded = true
+                    error = null
+                } else {
+                    error = "No new Shorts right now — tap refresh again."
+                }
+            } else {
+                error = "Couldn't load new Shorts. Check your connection."
+            }
+            refreshing = false
+        }
+    }
+
+    private fun merge(page: List<VideoItem>): List<VideoItem> {
+        val merged = LinkedHashMap<String, VideoItem>()
+        seed?.let { merged[it.id] = it }
+        page.forEach { merged.putIfAbsent(it.id, it) }
+        return merged.values.toList()
     }
 
     fun loadMore() {
@@ -117,6 +197,7 @@ private class ShortsFeedState(private val scope: kotlinx.coroutines.CoroutineSco
                 .onSuccess { page ->
                     val known = videos.mapTo(HashSet()) { it.id }
                     videos = videos + page.videos.filter { known.add(it.id) }
+                    seen += page.videos.map { it.id }
                     next = page.next
                     ended = page.next == null
                 }
@@ -131,9 +212,13 @@ fun ShortsScreen(
     onSignIn: () -> Unit,
     onSearch: () -> Unit,
     bottomInset: Dp = 0.dp,
+    startItem: VideoItem? = null,
+    active: Boolean = true,
+    onOpenChannel: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
 
     val view = androidx.compose.ui.platform.LocalView.current
     DisposableEffect(Unit) {
@@ -148,8 +233,8 @@ fun ShortsScreen(
             if (lightNav != null) controller.isAppearanceLightNavigationBars = lightNav
         }
     }
-    val feed = remember { ShortsFeedState(scope) }
-    LaunchedEffect(Unit) { if (feed.videos.isEmpty()) feed.load() }
+    val feed = remember(startItem?.id) { ShortsFeedState(scope, startItem) }
+    LaunchedEffect(feed) { feed.load() }
 
     val pager = rememberPagerState(pageCount = { feed.videos.size })
     val page = if (feed.videos.isEmpty()) 0 else pager.settledPage.coerceIn(0, feed.videos.lastIndex)
@@ -160,12 +245,30 @@ fun ShortsScreen(
     }
 
     val exo = remember {
-        ExoPlayer.Builder(context).build().apply {
+        buildShortsPlayer(context).apply {
             repeatMode = Player.REPEAT_MODE_ONE
             playWhenReady = true
         }
     }
-    DisposableEffect(Unit) { onDispose { exo.release() } }
+    val preloader = remember {
+        buildShortsPlayer(context).apply {
+            volume = 0f
+            playWhenReady = false
+        }
+    }
+    DisposableEffect(Unit) { onDispose { exo.release(); preloader.release() } }
+
+    var resumeAfterOverlay by remember { mutableStateOf(false) }
+    LaunchedEffect(active) {
+        if (!active) {
+            resumeAfterOverlay = exo.isPlaying
+            exo.pause()
+            preloader.pause()
+        } else if (resumeAfterOverlay) {
+            resumeAfterOverlay = false
+            exo.play()
+        }
+    }
 
     var info by remember { mutableStateOf<StreamInfo?>(null) }
     var playError by remember { mutableStateOf<String?>(null) }
@@ -175,14 +278,11 @@ fun ShortsScreen(
     var duration by remember { mutableLongStateOf(0L) }
     var liked by remember { mutableStateOf(false) }
     var disliked by remember { mutableStateOf(false) }
+    var likeCount by remember { mutableLongStateOf(-1L) }
     var dislikes by remember { mutableLongStateOf(-1L) }
+    var likeBump by remember { mutableIntStateOf(0) }
+    var dislikeBump by remember { mutableIntStateOf(0) }
     var subscribed by remember { mutableStateOf(false) }
-
-
-
-    val comments = remember { CommentsState(scope) }
-    var commentsOpen by remember { mutableStateOf(false) }
-    var resumeAfterComments by remember { mutableStateOf(false) }
 
 
     DisposableEffect(exo) {
@@ -213,7 +313,10 @@ fun ShortsScreen(
         duration = 0L
         liked = false
         disliked = false
+        likeCount = -1L
         dislikes = -1L
+        likeBump = 0
+        dislikeBump = 0
         subscribed = false
 
         launch {
@@ -228,22 +331,13 @@ fun ShortsScreen(
             playError = "Couldn't load this Short."
             return@LaunchedEffect
         }
-        val hls = loaded.hlsUrl?.ifBlank { null }
-        val url = hls ?: StreamSelection.pick(loaded).let { it.muxed?.content ?: it.video?.content }
-        if (url.isNullOrBlank()) {
+        likeCount = loaded.likeCount
+        val source = shortsSource(context, loaded)
+        if (source == null) {
             playError = "This Short has no playable stream."
             return@LaunchedEffect
         }
-        exo.setMediaItem(
-            if (hls != null) {
-                MediaItem.Builder()
-                    .setUri(hls)
-                    .setMimeType(androidx.media3.common.MimeTypes.APPLICATION_M3U8)
-                    .build()
-            } else {
-                MediaItem.fromUri(url)
-            },
-        )
+        exo.setMediaSource(source)
         exo.prepare()
         exo.play()
         if (Account.signedIn) {
@@ -253,6 +347,26 @@ fun ShortsScreen(
                 subscribed = st.subscribed == true
             }
         }
+    }
+
+    // Resolve the next three Shorts while this one plays, and quietly buffer the very next
+    // stream into the shared MediaCache so the swipe lands on already-downloaded bytes.
+    LaunchedEffect(feed.videos, page) {
+        val upcoming = feed.videos.drop(page + 1).take(3)
+        if (upcoming.isEmpty()) {
+            preloader.stop()
+            preloader.clearMediaItems()
+            return@LaunchedEffect
+        }
+        withContext(Dispatchers.IO) { upcoming.forEach { StreamCache.prefetch(it.id) } }
+        val next = upcoming.first()
+        val loaded = withContext(Dispatchers.IO) {
+            runCatching { StreamCache.getOrLoad(next.id) }.getOrNull()
+        } ?: return@LaunchedEffect
+        val source = shortsSource(context, loaded) ?: return@LaunchedEffect
+        preloader.stop()
+        preloader.setMediaSource(source)
+        preloader.prepare()
     }
 
     LaunchedEffect(muted) { exo.volume = if (muted) 0f else 1f }
@@ -270,6 +384,8 @@ fun ShortsScreen(
         }
         context.startActivity(Intent.createChooser(intent, "Share Short"))
     }
+
+    val glassTint = glassFill(0.5f)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (feed.videos.isEmpty()) {
@@ -296,7 +412,72 @@ fun ShortsScreen(
                 pageSpacing = 0.dp,
             ) { index ->
                 val item = feed.videos.getOrNull(index) ?: return@VerticalPager
-                Box(Modifier.fillMaxSize().background(Color.Black)) {
+                val pageOffset = ((pager.currentPage - index) + pager.currentPageOffsetFraction)
+                    .absoluteValue.coerceIn(0f, 1f)
+                val pageFocus = remember { FocusRequester() }
+                var selfFocused by remember { mutableStateOf(false) }
+                LaunchedEffect(index, page) {
+                    if (TvMode.isTv && index == page && feed.videos.isNotEmpty()) {
+                        runCatching { pageFocus.requestFocus() }
+                    }
+                }
+                val backdrop = rememberLayerBackdrop()
+                val glass = glassSpec(
+                    shape = CircleShape,
+                    tint = glassTint,
+                    blur = 16.dp,
+                    refractionHeight = 9.dp,
+                    refractionAmount = 14.dp,
+                )
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            val s = 1f - 0.05f * pageOffset
+                            scaleX = s
+                            scaleY = s
+                            alpha = 1f - 0.3f * pageOffset
+                        }
+                        .then(
+                            if (TvMode.isTv) Modifier
+                                .focusRequester(pageFocus)
+                                .onFocusChanged { selfFocused = it.isFocused }
+                                .onPreviewKeyEvent { e ->
+                                    if (!selfFocused || e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                    when (e.key) {
+                                        Key.DirectionUp -> {
+                                            if (pager.currentPage > 0) scope.launch { pager.animateScrollToPage(pager.currentPage - 1) }
+                                            true
+                                        }
+                                        Key.DirectionDown -> {
+                                            if (pager.currentPage < feed.videos.lastIndex) {
+                                                scope.launch { pager.animateScrollToPage(pager.currentPage + 1) }
+                                            }
+                                            true
+                                        }
+                                        Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
+                                            if (exo.isPlaying) exo.pause() else exo.play()
+                                            true
+                                        }
+                                        Key.MediaPlayPause -> {
+                                            if (exo.isPlaying) exo.pause() else exo.play()
+                                            true
+                                        }
+                                        Key.DirectionRight -> {
+                                            focusManager.moveFocus(FocusDirection.Right)
+                                            true
+                                        }
+                                        else -> false
+                                    }
+                                }
+                                .focusable()
+                            else Modifier,
+                        )
+                        .background(Color.Black),
+                ) {
+                    // Everything the glass samples lives in this layer. The buttons are drawn
+                    // outside it so a backdrop can never contain the surface that samples it.
+                    Box(Modifier.fillMaxSize().layerBackdrop(backdrop)) {
                     if (index == page && playError == null) {
 
 
@@ -341,7 +522,7 @@ fun ShortsScreen(
                                 ),
                             ),
                     )
-
+                    }
 
                     Box(
                         Modifier
@@ -359,17 +540,18 @@ fun ShortsScreen(
                     if (index == page && !playing && playError == null) {
                         Box(
                             Modifier
-                                .size(76.dp)
+                                .size(56.dp)
                                 .align(Alignment.Center)
+                                .pressable(pressedScale = 0.9f) { exo.play() }
                                 .clip(CircleShape)
-                                .background(Color.Black.copy(alpha = 0.5f)),
+                                .liquidGlass(backdrop, glass),
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
                                 Icons.Rounded.PlayArrow,
                                 contentDescription = "Play",
                                 tint = Color.White,
-                                modifier = Modifier.size(48.dp),
+                                modifier = Modifier.size(30.dp),
                             )
                         }
                     }
@@ -387,11 +569,10 @@ fun ShortsScreen(
                                             runCatching { StreamCache.getOrLoad(retryId) }.getOrNull()
                                         }
                                         info = loaded
-                                        val url = loaded?.hlsUrl?.ifBlank { null }
-                                            ?: loaded?.let { StreamSelection.pick(it) }?.let { it.muxed?.content ?: it.video?.content }
-                                        if (url != null) {
+                                        val source = loaded?.let { shortsSource(context, it) }
+                                        if (source != null) {
                                             playError = null
-                                            exo.setMediaItem(MediaItem.fromUri(url))
+                                            exo.setMediaSource(source)
                                             exo.prepare()
                                             exo.play()
                                         }
@@ -406,9 +587,18 @@ fun ShortsScreen(
                         muted = muted,
                         onToggleMute = { muted = !muted },
                         onSearch = onSearch,
+                        refreshing = feed.refreshing,
+                        onRefresh = {
+                            feed.refresh()
+                            scope.launch { if (feed.videos.isNotEmpty()) pager.scrollToPage(0) }
+                        },
+                        backdrop = backdrop,
+                        glass = glass,
                     )
 
                     if (index == page) {
+                        val currentLikeCount = if (likeCount >= 0) (likeCount + likeBump).coerceAtLeast(0L) else if (liked) 1L else -1L
+                        val currentDislikes = if (dislikes >= 0) (dislikes + dislikeBump).coerceAtLeast(0L) else if (disliked) 1L else -1L
                         ShortsRail(
                             modifier = Modifier
                                 .align(Alignment.BottomEnd)
@@ -420,37 +610,41 @@ fun ShortsScreen(
                             info = info,
                             liked = liked,
                             disliked = disliked,
-                            dislikes = dislikes,
+                            likeCount = currentLikeCount,
+                            dislikes = currentDislikes,
                             onLike = {
-                                if (!requireSignIn()) return@ShortsRail
-                                val next = if (liked) LikeStatus.None else LikeStatus.Like
-                                liked = next == LikeStatus.Like
-                                disliked = false
-                                scope.launch {
-                                    runCatching { InnerTube.setLike(item.id, next) }.onFailure {
-                                        liked = false
-                                        Toast.makeText(context, "Couldn't update your like.", Toast.LENGTH_SHORT).show()
+                                val beforeLiked = liked
+                                val beforeDisliked = disliked
+                                val next = !beforeLiked
+                                liked = next
+                                if (next) disliked = false
+                                likeBump += (if (next) 1 else 0) - (if (beforeLiked) 1 else 0)
+                                if (beforeDisliked) dislikeBump -= 1
+                                if (Account.signedIn) {
+                                    val target = if (next) LikeStatus.Like else LikeStatus.None
+                                    scope.launch {
+                                        runCatching { InnerTube.setLike(item.id, target) }
                                     }
                                 }
                             },
                             onDislike = {
-                                if (!requireSignIn()) return@ShortsRail
-                                val next = if (disliked) LikeStatus.None else LikeStatus.Dislike
-                                disliked = next == LikeStatus.Dislike
-                                liked = false
-                                scope.launch {
-                                    runCatching { InnerTube.setLike(item.id, next) }.onFailure {
-                                        disliked = false
+                                val beforeLiked = liked
+                                val beforeDisliked = disliked
+                                val next = !beforeDisliked
+                                disliked = next
+                                if (next) liked = false
+                                dislikeBump += (if (next) 1 else 0) - (if (beforeDisliked) 1 else 0)
+                                if (beforeLiked) likeBump -= 1
+                                if (Account.signedIn) {
+                                    val target = if (next) LikeStatus.Dislike else LikeStatus.None
+                                    scope.launch {
+                                        runCatching { InnerTube.setLike(item.id, target) }
                                     }
                                 }
                             },
-                            onComments = {
-                                resumeAfterComments = exo.isPlaying
-                                exo.pause()
-                                comments.load(item.id)
-                                commentsOpen = true
-                            },
                             onShare = { share(item) },
+                            backdrop = backdrop,
+                            glass = glass,
                         )
 
                         ShortsDetails(
@@ -482,11 +676,14 @@ fun ShortsScreen(
                                 }
                             },
                             onOpenChannel = {
-                                val url = info?.uploaderUrl ?: item.channelUrl
+                                val url = info?.uploaderUrl
+                                    ?: item.channelUrl
+                                    ?: item.channelId()?.let { "https://www.youtube.com/channel/$it" }
                                 if (url != null) {
-
-
-                                    Toast.makeText(context, info?.uploaderName ?: item.channel, Toast.LENGTH_SHORT).show()
+                                    exo.pause()
+                                    onOpenChannel(url)
+                                } else {
+                                    Toast.makeText(context, "Channel unavailable", Toast.LENGTH_SHORT).show()
                                 }
                             },
                         )
@@ -519,29 +716,37 @@ fun ShortsScreen(
             }
         }
 
-        if (commentsOpen) {
-            fun closeComments() {
-                commentsOpen = false
-                if (resumeAfterComments) exo.play()
+        AnimatedVisibility(
+            visible = feed.refreshing,
+            enter = fadeIn(tween(160)) + slideInVertically(tween(220)) { -it / 2 },
+            exit = fadeOut(tween(140)) + slideOutVertically(tween(160)) { -it / 2 },
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 58.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(50))
+                    .background(Color.Black.copy(alpha = 0.62f))
+                    .padding(horizontal = 14.dp, vertical = 9.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(15.dp),
+                    color = Color.White,
+                    strokeWidth = 2.dp,
+                )
+                Spacer(Modifier.width(9.dp))
+                Text(
+                    "Finding new Shorts…",
+                    color = Color.White,
+                    fontSize = 12.5.sp,
+                    fontWeight = FontWeight.SemiBold,
+                )
             }
-
-            Box(
-                Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.34f))
-                    .clickable(
-                        interactionSource = remember { MutableInteractionSource() },
-                        indication = null,
-                    ) { closeComments() },
-            )
-            CommentsPanel(
-                state = comments,
-                partialTop = 96.dp,
-                onClose = { closeComments() },
-                creatorAvatar = info?.uploaderAvatars?.maxByOrNull { it.width }?.url ?: current?.avatar,
-                creatorName = (info?.uploaderName ?: current?.channel).orEmpty(),
-            )
         }
+
     }
 }
 
@@ -551,6 +756,10 @@ private fun ShortsTopBar(
     muted: Boolean,
     onToggleMute: () -> Unit,
     onSearch: () -> Unit,
+    refreshing: Boolean,
+    onRefresh: () -> Unit,
+    backdrop: Backdrop,
+    glass: GlassSpec,
 ) {
     Row(
         modifier = Modifier
@@ -559,7 +768,7 @@ private fun ShortsTopBar(
             .padding(horizontal = 6.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ShortsCircleButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack)
+        ShortsCircleButton(Icons.AutoMirrored.Rounded.ArrowBack, "Back", onBack, backdrop, glass)
         Spacer(Modifier.width(8.dp))
         Text(
             "Shorts",
@@ -568,9 +777,19 @@ private fun ShortsTopBar(
             fontWeight = FontWeight.Bold,
         )
         Spacer(Modifier.weight(1f))
-        ShortsCircleButton(if (muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp, "Sound", onToggleMute)
+        ShortsCircleButton(if (muted) Icons.Rounded.VolumeOff else Icons.Rounded.VolumeUp, "Sound", onToggleMute, backdrop, glass)
         Spacer(Modifier.width(6.dp))
-        ShortsCircleButton(Icons.Rounded.Search, "Search", onSearch)
+        ShortsCircleButton(
+            Icons.Rounded.Refresh,
+            if (refreshing) "Loading new Shorts" else "Load new Shorts",
+            onRefresh,
+            backdrop,
+            glass,
+            loading = refreshing,
+            enabled = !refreshing,
+        )
+        Spacer(Modifier.width(6.dp))
+        ShortsCircleButton(Icons.Rounded.Search, "Search", onSearch, backdrop, glass)
     }
 }
 
@@ -579,16 +798,28 @@ private fun ShortsCircleButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     onClick: () -> Unit,
+    backdrop: Backdrop,
+    glass: GlassSpec,
+    loading: Boolean = false,
+    enabled: Boolean = true,
 ) {
     Box(
         Modifier
             .size(40.dp)
+            .pressable(enabled = enabled, onClick = onClick)
             .clip(CircleShape)
-            .background(Color.Black.copy(alpha = 0.35f))
-            .pressable(onClick = onClick),
+            .liquidGlass(backdrop, glass),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(22.dp))
+        if (loading) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(19.dp),
+                color = Color.White,
+                strokeWidth = 2.dp,
+            )
+        } else {
+            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(21.dp))
+        }
     }
 }
 
@@ -599,31 +830,38 @@ private fun ShortsRail(
     info: StreamInfo?,
     liked: Boolean,
     disliked: Boolean,
+    likeCount: Long,
     dislikes: Long,
     onLike: () -> Unit,
     onDislike: () -> Unit,
-    onComments: () -> Unit,
     onShare: () -> Unit,
+    backdrop: Backdrop,
+    glass: GlassSpec,
 ) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         ShortsAction(
             icon = Icons.Rounded.ThumbUp,
-            label = countLabel(info?.likeCount ?: -1L),
+            label = countLabel(likeCount, "Like"),
             tint = if (liked) Color(0xFFFF2D55) else Color.White,
+            active = liked,
+            backdrop = backdrop,
+            glass = glass,
             onClick = onLike,
         )
         ShortsAction(
             icon = Icons.Rounded.ThumbDown,
             label = countLabel(dislikes, "Dislike"),
             tint = if (disliked) Color(0xFFFF2D55) else Color.White,
+            active = disliked,
+            backdrop = backdrop,
+            glass = glass,
             onClick = onDislike,
         )
-        ShortsAction(Icons.Rounded.Comment, "Comments", onClick = onComments)
-        ShortsAction(Icons.Rounded.Share, "Share", onClick = onShare)
+        ShortsAction(Icons.Rounded.Share, "Share", backdrop = backdrop, glass = glass, onClick = onShare)
     }
 }
 
@@ -632,18 +870,30 @@ private fun ShortsAction(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     tint: Color = Color.White,
+    active: Boolean = false,
+    backdrop: Backdrop,
+    glass: GlassSpec,
     onClick: () -> Unit,
 ) {
+    val scale by animateFloatAsState(
+        targetValue = if (active) 1.16f else 1f,
+        animationSpec = spring(dampingRatio = 0.45f, stiffness = 450f),
+        label = "actionScale",
+    )
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             Modifier
                 .size(46.dp)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                }
+                .pressable(onClick = onClick)
                 .clip(CircleShape)
-                .background(Color.Black.copy(alpha = 0.28f))
-                .pressable(onClick = onClick),
+                .liquidGlass(backdrop, glass),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(26.dp))
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(25.dp))
         }
         Spacer(Modifier.height(4.dp))
         Text(
@@ -683,7 +933,9 @@ private fun ShortsDetails(
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .pressable(onClick = onOpenChannel),
             )
             if (!subscribed) {
                 Spacer(Modifier.width(10.dp))
@@ -787,3 +1039,41 @@ private fun ShortsVideo(player: ExoPlayer, modifier: Modifier = Modifier) {
         )
     }
 }
+
+@OptIn(UnstableApi::class)
+private fun buildShortsPlayer(context: Context): ExoPlayer {
+    val loadControl = DefaultLoadControl.Builder()
+        .setAllocator(DefaultAllocator(true, 64 * 1024))
+        .setBufferDurationsMs(1_500, 8_000, 250, 750)
+        .setBackBuffer(10_000, false)
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .build()
+    return ExoPlayer.Builder(context)
+        .setLoadControl(loadControl)
+        .build()
+}
+
+@OptIn(UnstableApi::class)
+private fun shortsSource(context: Context, info: StreamInfo): MediaSource? {
+    val picked = StreamSelection.pickShorts(info)
+    val dsFactory = MediaCache.dataSourceFactory(context)
+    val progressive = ProgressiveMediaSource.Factory(dsFactory)
+
+    val muxedUrl = picked.muxed?.content
+    if (!muxedUrl.isNullOrBlank()) {
+        return progressive.createMediaSource(MediaItem.fromUri(muxedUrl))
+    }
+
+    val videoUrl = picked.video?.content
+    val audioUrl = picked.audio?.content
+    if (!videoUrl.isNullOrBlank() && !audioUrl.isNullOrBlank()) {
+        val videoSource = progressive.createMediaSource(MediaItem.fromUri(videoUrl))
+        val audioSource = progressive.createMediaSource(MediaItem.fromUri(audioUrl))
+        return MergingMediaSource(videoSource, audioSource)
+    }
+
+    val fallbackUrl = info.videoStreams.firstOrNull { it.isUrl }?.content
+        ?: info.videoOnlyStreams.firstOrNull { it.isUrl }?.content
+    return fallbackUrl?.let { progressive.createMediaSource(MediaItem.fromUri(it)) }
+}
+

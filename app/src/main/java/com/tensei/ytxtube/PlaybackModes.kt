@@ -18,7 +18,7 @@ import kotlin.math.roundToInt
 
 
 object PlaybackSpeed {
-    const val MIN = 0.5f
+    const val MIN = 0.25f
     const val MAX = 3f
     const val STEP = 0.05f
 

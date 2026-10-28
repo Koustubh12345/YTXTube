@@ -48,7 +48,7 @@ object SharedVideoTexture {
         } else if (kept !== fresh) {
 
             runCatching { view.setSurfaceTexture(kept) }
-                .onFailure { Log.w("FlashTube", "couldn't re-attach the video texture", it) }
+                .onFailure { Log.w("YTXTube", "couldn't re-attach the video texture", it) }
         }
     }
 }

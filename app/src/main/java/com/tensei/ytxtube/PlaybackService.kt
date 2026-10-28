@@ -17,6 +17,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
@@ -36,6 +37,7 @@ import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.source.SingleSampleMediaSource
 import androidx.media3.exoplayer.upstream.LoadErrorHandlingPolicy
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
@@ -43,6 +45,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import org.schabi.newpipe.extractor.services.youtube.dashmanifestcreators.YoutubeProgressiveDashManifestCreator
 import org.schabi.newpipe.extractor.stream.Stream
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import java.io.ByteArrayInputStream
 import java.util.concurrent.Executors
 
@@ -88,7 +91,13 @@ class PlaybackService : MediaSessionService() {
 
             .setLoadControl(
                 DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(15_000, 50_000, 1_000, 2_000)
+                    // Start after a quarter second, keep a 30 s runway and a 10 s rewind
+                    // buffer. The old 15 s/50 s/1 s policy is what made every open sit on
+                    // a spinner before the first frame.
+                    .setAllocator(androidx.media3.exoplayer.upstream.DefaultAllocator(true, 64 * 1024))
+                    .setBufferDurationsMs(2_500, 30_000, 250, 750)
+                    .setBackBuffer(10_000, false)
+                    .setPrioritizeTimeOverSizeThresholds(true)
                     .build(),
             )
             .setAudioAttributes(
@@ -231,12 +240,12 @@ private class StreamRecoverer(
         val id = item.mediaId
         val position = player.currentPosition
         if (id == lastId && position < lastPositionMs + PROGRESS_MS) {
-            Log.w("FlashTube", "stream refused again for $id at ${position / 1000}s; giving up")
+            Log.w("YTXTube", "stream refused again for $id at ${position / 1000}s; giving up")
             return
         }
         lastId = id
         lastPositionMs = position
-        Log.i("FlashTube", "stream refused for $id; re-extracting and resuming at ${position / 1000}s")
+        Log.i("YTXTube", "stream refused for $id; re-extracting and resuming at ${position / 1000}s")
         StreamRecovery.failed = null
         StreamRecovery.recovering = id
         StreamCache.invalidate(id)
@@ -249,7 +258,7 @@ private class StreamRecoverer(
                 result
                     .onSuccess { resume(item, position) }
                     .onFailure {
-                        Log.w("FlashTube", "re-extracting $id failed", it)
+                        Log.w("YTXTube", "re-extracting $id failed", it)
                         StreamRecovery.failed = id to YouTube.friendlyError(it)
                     }
             }
@@ -307,7 +316,7 @@ private class WatchTimeReporter(private val player: ExoPlayer) : Player.Listener
         if (player.isPlaying) startStretch()
         io.execute {
             val started = runCatching { InnerTube.startWatch(id) }
-                .onFailure { Log.w("FlashTube", "watch start for $id", it) }.getOrNull()
+                .onFailure { Log.w("YTXTube", "watch start for $id", it) }.getOrNull()
             main.post { if (videoId == id) session = started }
         }
     }
@@ -379,7 +388,7 @@ private class WatchTimeReporter(private val player: ExoPlayer) : Player.Listener
         starts.clear(); ends.clear()
         io.execute {
             runCatching { InnerTube.pingWatchtime(s, position, st, et, playing, elapsed, final) }
-                .onFailure { Log.w("FlashTube", "watch time for ${s.videoId}", it) }
+                .onFailure { Log.w("YTXTube", "watch time for ${s.videoId}", it) }
         }
     }
 
@@ -441,7 +450,7 @@ private class SponsorSkipper(private val player: ExoPlayer) : Player.Listener {
         if (!SponsorBlock.enabled || segment.action != SponsorBlock.Action.Auto) return
         if (player.currentMediaItem?.mediaId != videoId) return
         if (player.currentPosition > segment.endMs - 500) return
-        Log.i("FlashTube", "SponsorBlock: skipping ${segment.category.key} ${segment.startMs}-${segment.endMs} in $videoId")
+        Log.i("YTXTube", "SponsorBlock: skipping ${segment.category.key} ${segment.startMs}-${segment.endMs} in $videoId")
         ramp(from = 1f, to = 0f, durationMs = 300) {
             player.seekTo(segment.endMs)
             SponsorBlock.lastSkip = SponsorBlock.Skip(videoId, segment)
@@ -484,7 +493,10 @@ private class YouTubeMediaSourceFactory(context: Context) : MediaSource.Factory 
 
     override fun getSupportedTypes(): IntArray = fallback.supportedTypes
 
-    override fun createMediaSource(mediaItem: MediaItem): MediaSource {
+    override fun createMediaSource(mediaItem: MediaItem): MediaSource =
+        withCaptions(buildSource(mediaItem), mediaItem)
+
+    private fun buildSource(mediaItem: MediaItem): MediaSource {
 
         if (mediaItem.localConfiguration?.uri?.scheme == "file") {
             return fallback.createMediaSource(mediaItem)
@@ -492,12 +504,14 @@ private class YouTubeMediaSourceFactory(context: Context) : MediaSource.Factory 
         val info = StreamCache.get(mediaItem.mediaId) ?: return fallback.createMediaSource(mediaItem)
         val isLive = info.streamType == org.schabi.newpipe.extractor.stream.StreamType.LIVE_STREAM
         val hlsUrl = info.hlsUrl?.ifBlank { null }
-        if (isLive || !hlsUrl.isNullOrBlank()) {
-            val streamUri = hlsUrl ?: info.url
-            Log.i("FlashTube", "media source ${mediaItem.mediaId}: playing live HLS stream from $streamUri")
+        // HLS is a live fallback only. A VOD HLS manifest carries just YouTube's default audio
+        // track, so using it for normal videos silently ignored both the picked language and the
+        // picked quality. VOD goes through the generated DASH/progressive path below.
+        if (isLive && !hlsUrl.isNullOrBlank()) {
+            Log.i("YTXTube", "media source ${mediaItem.mediaId}: playing live HLS stream from $hlsUrl")
             return HlsMediaSource.Factory(dataSourceFactory).createMediaSource(
                 MediaItem.Builder()
-                    .setUri(streamUri)
+                    .setUri(hlsUrl)
                     .setMediaId(mediaItem.mediaId)
                     .setMediaMetadata(mediaItem.mediaMetadata)
                     .build(),
@@ -505,15 +519,27 @@ private class YouTubeMediaSourceFactory(context: Context) : MediaSource.Factory 
         }
         val picked = StreamSelection.pick(info)
 
+        // Nothing separable or muxed was extracted: HLS is still better than a black screen.
+        if (picked.video == null && picked.muxed == null && !hlsUrl.isNullOrBlank()) {
+            Log.i("YTXTube", "media source ${mediaItem.mediaId}: no progressive streams, falling back to HLS")
+            return HlsMediaSource.Factory(dataSourceFactory).createMediaSource(
+                MediaItem.Builder()
+                    .setUri(hlsUrl)
+                    .setMediaId(mediaItem.mediaId)
+                    .setMediaMetadata(mediaItem.mediaMetadata)
+                    .build(),
+            )
+        }
+
         if (QualityPreference.height == null && picked.audio != null) {
             val adaptive = adaptiveVideo(info, mediaItem)
             if (adaptive != null) {
-                Log.i("FlashTube", "media source ${mediaItem.mediaId}: adaptive video ${StreamSelection.autoLadder(info).joinToString("/") { "${it.height}" }}p + audio itag ${picked.audio.itag}")
+                Log.i("YTXTube", "media source ${mediaItem.mediaId}: adaptive video ${StreamSelection.autoLadder(info).joinToString("/") { "${it.height}" }}p + audio itag ${picked.audio.itag}")
                 return MergingMediaSource(true, true, adaptive, source(picked.audio, info.duration, mediaItem))
             }
         }
         Log.i(
-            "FlashTube",
+            "YTXTube",
             "media source ${mediaItem.mediaId}: " + if (picked.usesSeparate) "video itag ${picked.video?.itag} (${picked.video?.height}p) + audio itag ${picked.audio?.itag}"
             else "combined fallback itag ${picked.muxed?.itag} (${picked.muxed?.height}p); video=${picked.video != null} audio=${picked.audio != null}; " +
                 "audio offered: " + info.audioStreams.joinToString { "${it.itag}/${it.format}/${it.deliveryMethod}/url=${it.isUrl}/${it.audioTrackType}" },
@@ -538,6 +564,46 @@ private class YouTubeMediaSourceFactory(context: Context) : MediaSource.Factory 
 
 
 
+
+    /**
+     * Side-loads every caption track the extractor found as Media3 text sources. Media3 parses
+     * VTT/SRT/TTML itself and drives the text renderer, so cue timing, multiple lines and
+     * auto-generated captions are handled by the player instead of a hand-rolled parser.
+     */
+    private fun withCaptions(base: MediaSource, mediaItem: MediaItem): MediaSource {
+        if (mediaItem.localConfiguration?.uri?.scheme == "file") return base
+        val info = StreamCache.get(mediaItem.mediaId) ?: return base
+        val tracks = info.subtitles.filter { it.isUrl && it.content.isNotBlank() }
+        if (tracks.isEmpty()) return base
+        val sources = tracks.mapNotNull { sub ->
+            val url = captionVttUrl(sub.content)
+            val config = MediaItem.SubtitleConfiguration.Builder(Uri.parse(url))
+                .setMimeType(MimeTypes.TEXT_VTT)
+                .setLanguage(sub.languageTag.takeIf { it.isNotBlank() })
+                .setLabel(
+                    if (sub.isAutoGenerated) "${sub.languageTag} (Auto)" else sub.languageTag,
+                )
+                .setRoleFlags(
+                    if (sub.isAutoGenerated) {
+                        C.ROLE_FLAG_SUBTITLE or C.ROLE_FLAG_TRANSCRIBES_DIALOG
+                    } else {
+                        C.ROLE_FLAG_SUBTITLE
+                    },
+                )
+                .build()
+            runCatching {
+                SingleSampleMediaSource.Factory(dataSourceFactory)
+                    .setTreatLoadErrorsAsEndOfStream(true)
+                    .createMediaSource(config, C.TIME_UNSET)
+            }.getOrNull()
+        }
+        if (sources.isEmpty()) return base
+        return MergingMediaSource(true, true, base, *sources.toTypedArray())
+    }
+
+    private fun captionVttUrl(raw: String): String = runCatching {
+        raw.toHttpUrlOrNull()?.newBuilder()?.setQueryParameter("fmt", "vtt")?.build()?.toString() ?: raw
+    }.getOrDefault(raw)
 
     private fun adaptiveVideo(info: org.schabi.newpipe.extractor.stream.StreamInfo, mediaItem: MediaItem): MediaSource? {
         val durationSec = info.duration.takeIf { it > 0 } ?: return null

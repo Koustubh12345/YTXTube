@@ -504,7 +504,7 @@ private fun youTubeScheme(dark: Boolean): ColorScheme = if (!dark) lightColorSch
 )
 
 
-val FLASHTUBE_THEMES = listOf(ThemeChoice("YouTube", SEED_YOUTUBE)) + THEME_CHOICES
+val YTX_THEMES = listOf(ThemeChoice("YouTube", SEED_YOUTUBE)) + THEME_CHOICES
 
 
 fun schemeFor(context: Context, seedHex: String?, dark: Boolean): ColorScheme =
@@ -526,7 +526,7 @@ fun isDarkTheme(): Boolean = when (ThemeSettings.mode) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FlashTubeTheme(content: @Composable () -> Unit) {
+fun YtxTubeTheme(content: @Composable () -> Unit) {
     val dark = isDarkTheme()
     val isAmoled = ThemeSettings.mode == "amoled"
     val context = LocalContext.current

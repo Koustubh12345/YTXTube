@@ -109,6 +109,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
@@ -129,7 +130,7 @@ class MainActivity : ComponentActivity() {
         ) {
             notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
-        setContent { FlashTubeTheme { FlashTubeApp() } }
+        setContent { YtxTubeTheme { YtxTubeApp() } }
     }
 }
 
@@ -149,7 +150,7 @@ private val MiniWidth = 368.dp
 private val MiniGap = 8.dp
 
 @Composable
-fun FlashTubeApp() {
+fun YtxTubeApp() {
     val c = MaterialTheme.colorScheme
     val player = rememberPlayerState()
     val scope = rememberCoroutineScope()
@@ -159,6 +160,7 @@ fun FlashTubeApp() {
     var openSettings by remember { mutableStateOf(false) }
     var openPlaylist by remember { mutableStateOf<PlaylistRef?>(null) }
     var openChannel by remember { mutableStateOf<String?>(null) }
+    var shortsEntry by remember { mutableStateOf<VideoItem?>(null) }
     var openAllSubscriptions by remember { mutableStateOf(false) }
     var openSearch by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
@@ -169,6 +171,19 @@ fun FlashTubeApp() {
 
     var channelState by remember { mutableStateOf<ChannelState?>(null) }
     val playlistFeed = remember(openPlaylist?.id) { openPlaylist?.let { lib.playlistFeed(it.id) } }
+    val updateState = remember { UpdateState(scope) }
+    val appContext = LocalContext.current
+
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.delay(1_400)
+        updateState.check()
+    }
+    LaunchedEffect(updateState.message) {
+        updateState.message?.let { message ->
+            android.widget.Toast.makeText(appContext, message, android.widget.Toast.LENGTH_SHORT).show()
+            updateState.message = null
+        }
+    }
 
     val scrollToTop = remember { mutableStateMapOf<Tab, Int>() }
     val reduced = rememberReducedMotion()
@@ -245,11 +260,25 @@ fun FlashTubeApp() {
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     val fullscreenBeforePip = remember { mutableStateOf(false) }
-    val showFullscreen = if (pip.active) fullscreenBeforePip.value else (playerOpen && landscape && !player.isMusicMode)
+    val showFullscreen = if (pip.active) fullscreenBeforePip.value
+        else (playerOpen && (landscape || player.portraitFullscreen) && !player.isMusicMode)
     SideEffect { if (!pip.active) fullscreenBeforePip.value = showFullscreen }
     LaunchedEffect(showFullscreen) { player.fullscreen = showFullscreen }
     SystemBarsHidden(showFullscreen)
-    fun toggleFullscreen() = if (showFullscreen) orientation.exitFullscreen() else orientation.enterFullscreen()
+
+    fun exitFullscreen() {
+        player.portraitFullscreen = false
+        orientation.exitFullscreen()
+    }
+
+    fun toggleFullscreen() {
+        when {
+            showFullscreen -> exitFullscreen()
+            // A vertical video fills the portrait screen instead of being letterboxed in landscape.
+            player.portraitVideo -> player.portraitFullscreen = true
+            else -> orientation.enterFullscreen()
+        }
+    }
 
     BackHandler(enabled = player.expanded) { player.expanded = false }
     BackHandler(enabled = !player.expanded && openSettings) { openSettings = false }
@@ -262,9 +291,10 @@ fun FlashTubeApp() {
     BackHandler(enabled = signingIn) { signingIn = false }
     BackHandler(enabled = !player.expanded && openChannel != null) { openChannel = null }
 
-    BackHandler(enabled = showFullscreen) { orientation.exitFullscreen() }
+    BackHandler(enabled = showFullscreen) { exitFullscreen() }
+    BackHandler(enabled = shortsEntry != null) { shortsEntry = null }
+    BackHandler(enabled = updateState.visible) { updateState.dismiss() }
 
-    val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val density = LocalDensity.current
 
 
@@ -280,7 +310,10 @@ fun FlashTubeApp() {
     BoxWithConstraints(Modifier.fillMaxSize().background(c.surface)) {
 
         val stageAspect = player.stageAspect
-        val geometry = remember(constraints.maxWidth, constraints.maxHeight, stackBottom, statusTop, density, stageAspect) {
+        val stageTopPx = with(density) {
+            WindowInsets.statusBars.asPaddingValues().calculateTopPadding().toPx()
+        }
+        val geometry = remember(constraints.maxWidth, constraints.maxHeight, stackBottom, density, stageAspect, stageTopPx) {
             with(density) {
                 val w = constraints.maxWidth.toFloat()
                 val h = constraints.maxHeight.toFloat()
@@ -293,7 +326,9 @@ fun FlashTubeApp() {
                     Size(MiniThumbWidth.toPx(), MiniThumbHeight.toPx()),
                 )
                 val side = StageSideGap.toPx()
-                val stageTop = (statusTop + StageTopGap).toPx()
+                // The picture starts below the status bar; the status bar keeps the
+                // animated ambient shade behind it instead of sitting on the video.
+                val stageTop = stageTopPx
                 val stage = Rect(side, stageTop, w - side, stageTop + (w - 2 * side) / stageAspect)
                 MorphGeometry(
                     screen = Size(w, h),
@@ -328,6 +363,10 @@ fun FlashTubeApp() {
         Box(Modifier.fillMaxSize().layerBackdrop(pageBackdrop).background(c.surface)) {
         AnimatedContent(
             targetState = tab,
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .widthIn(max = if (TvMode.isTv) 1280.dp else Dp.Unspecified)
+                .fillMaxHeight(),
             transitionSpec = {
                 if (reduced) fadeIn(snap()) togetherWith fadeOut(snap())
                 else (fadeIn(tween(Motion.PageEnterMs, easing = Motion.Emphasized)) +
@@ -354,9 +393,21 @@ fun FlashTubeApp() {
                     onSignIn = { signingIn = true },
                     onSearch = { openSearch = true },
                     bottomInset = navTop + 12.dp,
+                    active = openChannel == null && !openSearch && !openSettings,
+                    onOpenChannel = { url ->
+                        player.expanded = false
+                        if (channelState?.url != url) channelState = ChannelState(url, scope)
+                        openChannel = url
+                    },
                 )
                 Tab.Library -> LibraryScreen(
                     lib, contentPadding, onOpen = player::open, onOpenPlaylist = { ref -> if (ref.id == "DL") tab = Tab.Downloads else openPlaylist = ref },
+                    onOpenChannel = { url ->
+                        player.expanded = false
+                        if (channelState?.url != url) channelState = ChannelState(url, scope)
+                        openChannel = url
+                    },
+                    onOpenAllSubscriptions = { openAllSubscriptions = true },
                     onSearch = { openSearch = true },
                     onSignIn = { signingIn = true }, onAccount = { openSettings = true },
                     scrollToTop = scrollToTop[Tab.Library] ?: 0,
@@ -428,7 +479,17 @@ fun FlashTubeApp() {
             exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
         ) {
             channelState?.let { ch ->
-                ChannelScreen(ch, contentPadding, onBack = { openChannel = null }, onOpen = player::open, onMessage = { player.actionMessage = it })
+                ChannelScreen(
+                    ch,
+                    contentPadding,
+                    onBack = { openChannel = null },
+                    onOpen = player::open,
+                    onOpenShort = { video ->
+                        player.expanded = false
+                        shortsEntry = video
+                    },
+                    onMessage = { player.actionMessage = it },
+                )
             }
         }
 
@@ -443,6 +504,7 @@ fun FlashTubeApp() {
                 onSignIn = { signingIn = true },
                 onSignedOut = { lib.reset(); player.refreshAccountState() },
                 contentPadding = contentPadding,
+                onCheckUpdate = { updateState.check(manual = true) },
             )
         }
 
@@ -451,7 +513,7 @@ fun FlashTubeApp() {
 
         }
 
-        if (hasMini && !openSettings && tab != Tab.Shorts) {
+        if (hasMini && !openSettings && tab != Tab.Shorts && shortsEntry == null) {
 
 
             val dismiss = remember { androidx.compose.animation.core.Animatable(0f) }
@@ -519,7 +581,7 @@ fun FlashTubeApp() {
         }
 
 
-        val showBottomBar = !openSettings && !openSearch
+        val showBottomBar = !openSettings && !openSearch && shortsEntry == null
         AnimatedVisibility(
             visible = showBottomBar,
             enter = slideInVertically(tween(260, easing = Motion.Emphasized)) { it } + fadeIn(tween(160)),
@@ -544,9 +606,28 @@ fun FlashTubeApp() {
 
 
 
+        shortsEntry?.let { entry ->
+            Box(Modifier.fillMaxSize().background(Color.Black)) {
+                ShortsScreen(
+                    onBack = { shortsEntry = null },
+                    onSignIn = { signingIn = true },
+                    onSearch = { openSearch = true },
+                    bottomInset = 12.dp,
+                    startItem = entry,
+                    active = openChannel == null && !openSearch,
+                    onOpenChannel = { url ->
+                        shortsEntry = null
+                        player.expanded = false
+                        if (channelState?.url != url) channelState = ChannelState(url, scope)
+                        openChannel = url
+                    },
+                )
+            }
+        }
+
         if (showFullscreen) {
             Box(Modifier.fillMaxSize().layerBackdrop(playerBackdrop)) {
-                FullscreenPlayer(player, onExit = { orientation.exitFullscreen() })
+                FullscreenPlayer(player, onExit = { exitFullscreen() })
             }
         } else if (showPlayer) {
             Box(Modifier.fillMaxSize().layerBackdrop(playerBackdrop)) {
@@ -571,6 +652,8 @@ fun FlashTubeApp() {
             PlayerSheet.Settings -> Unit
             PlayerSheet.Comments -> Unit
             PlayerSheet.Queue -> QueueSheet(player, onDismiss = { player.sheet = null })
+            PlayerSheet.Speed -> Unit
+            PlayerSheet.Audio -> Unit
             null -> Unit
         }
 
@@ -580,6 +663,22 @@ fun FlashTubeApp() {
             exit = fadeOut(tween(150)),
         ) {
             PlayerSettingsSheet(player, glassBackdrop, onDismiss = { player.sheet = null })
+        }
+
+        AnimatedVisibility(
+            visible = player.sheet == PlayerSheet.Speed,
+            enter = fadeIn(tween(180, easing = Motion.Emphasized)),
+            exit = fadeOut(tween(150)),
+        ) {
+            SpeedSheet(player, glassBackdrop, onDismiss = { player.sheet = null })
+        }
+
+        AnimatedVisibility(
+            visible = player.sheet == PlayerSheet.Audio,
+            enter = fadeIn(tween(180, easing = Motion.Emphasized)),
+            exit = fadeOut(tween(150)),
+        ) {
+            AudioTrackSheet(player, glassBackdrop, onDismiss = { player.sheet = null })
         }
 
 
@@ -653,6 +752,8 @@ fun FlashTubeApp() {
                 sharedSurface(Modifier.fillMaxSize().aspectFit(player.videoAspect))
             }
         }
+
+        UpdateOverlay(updateState, pageBackdrop)
         }
     }
 }

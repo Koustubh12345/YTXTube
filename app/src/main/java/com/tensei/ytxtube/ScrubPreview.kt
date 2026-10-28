@@ -29,7 +29,7 @@ import kotlin.math.min
 
 
 object ScrubStoryboards {
-    private const val TAG = "FlashTube"
+    private const val TAG = "YTXTube"
     private val framesets = ConcurrentHashMap<String, Frameset>()
     private val sprites = ConcurrentHashMap<String, Bitmap>()
 

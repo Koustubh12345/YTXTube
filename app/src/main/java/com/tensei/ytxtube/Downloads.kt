@@ -42,7 +42,7 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.max
 import kotlin.math.min
 
-private const val TAG = "FlashTubeDl"
+private const val TAG = "YTXTubeDl"
 
 enum class DownloadStatus { Queued, Downloading, Paused, Complete, Failed }
 
@@ -136,7 +136,7 @@ object Downloads {
     fun init(context: Context) {
         if (initialized) return
         val base = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir
-        dir = File(base, "FlashTube").apply { mkdirs() }
+        dir = File(base, "YTXTube").apply { mkdirs() }
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         initialized = true
         restore()
@@ -466,10 +466,10 @@ object Downloads {
             return
         }
         val chunks = when {
-            remote.total >= 32L * 1024 * 1024 -> 8
-            remote.total >= 8L * 1024 * 1024 -> 6
-            remote.total >= 2L * 1024 * 1024 -> 4
-            else -> 2
+            remote.total >= 32L * 1024 * 1024 -> 16
+            remote.total >= 8L * 1024 * 1024 -> 12
+            remote.total >= 2L * 1024 * 1024 -> 8
+            else -> 4
         }
         RandomAccessFile(file, "rw").use { it.setLength(remote.total) }
         val span = remote.total / chunks
@@ -506,7 +506,7 @@ object Downloads {
             RandomAccessFile(file, "rw").use { out ->
                 out.seek(start)
                 var position = start
-                val buffer = ByteArray(512 * 1024)
+                val buffer = ByteArray(1024 * 1024)
                 val source = body.source()
                 while (position <= end) {
                     val want = min(buffer.size.toLong(), end - position + 1).toInt()

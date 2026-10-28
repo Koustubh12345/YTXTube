@@ -5,9 +5,9 @@ import com.tensei.ytxtube.potoken.PoTokenGenerator
 import org.schabi.newpipe.extractor.services.youtube.PoTokenProvider
 import org.schabi.newpipe.extractor.services.youtube.PoTokenResult
 
-class FlashtubePoTokenProvider(private val generator: PoTokenGenerator) : PoTokenProvider {
+class YtxPoTokenProvider(private val generator: PoTokenGenerator) : PoTokenProvider {
     companion object {
-        private const val TAG = "FlashtubePoTokenProvider"
+        private const val TAG = "YtxPoTokenProvider"
     }
 
     private fun resolvePoToken(videoId: String?): PoTokenResult? {

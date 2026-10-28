@@ -383,7 +383,12 @@ object InnerTube {
 
 
 
-    suspend fun musicLyrics(videoId: String, title: String, artist: String): LyricsDoc? = withContext(Dispatchers.IO) {
+    suspend fun musicLyrics(
+        videoId: String,
+        title: String,
+        artist: String,
+        durationSec: Long = 0L,
+    ): LyricsDoc? = withContext(Dispatchers.IO) {
         val cleanTitle = title.replace(Regex("(?i)\\(official.*?\\)|\\[official.*?\\]|\\(audio\\)|\\[audio\\]|\\(video\\)|\\[video\\]|\\(lyric.*?\\)"), "")
             .replace(Regex("(?i)ft\\..*|feat\\..*"), "")
             .trim()
@@ -397,7 +402,7 @@ object InnerTube {
             val url = "https://lrclib.net/api/get?track_name=$encT&artist_name=$encA"
             val req = Request.Builder()
                 .url(url)
-                .header("User-Agent", "YTXMusic/1.0 (https://github.com/thinker/flashtube)")
+                .header("User-Agent", "YTXTube/1.1 (https://github.com/Koustubh12345/YTXTube)")
                 .build()
             Net.client.newCall(req).execute().use { r ->
                 if (r.isSuccessful) {
@@ -449,43 +454,61 @@ object InnerTube {
                     }
                     val ytLyrics = sb.toString().trim()
                     if (ytLyrics.isNotBlank() && !ytLyrics.startsWith("Provided to YouTube by")) {
-                        return@withContext parseLyrics(ytLyrics)
+                        val doc = parseLyrics(ytLyrics)
+                        if (doc.synced) return@withContext doc
+                        if (plainFallback == null) plainFallback = doc
                     }
                 }
             }
         }
 
-        plainFallback?.let { return@withContext it }
-
-
+        // One more chance at a synced match. This runs even when YouTube Music gave us plain
+        // lyrics: a synced lrclib result is what drives the karaoke highlight.
+        var foundSynced: LyricsDoc? = null
         runCatching {
-            val encT = java.net.URLEncoder.encode(cleanTitle, "UTF-8")
-            val encA = java.net.URLEncoder.encode(cleanArtist, "UTF-8")
-            val searchUrl = "https://lrclib.net/api/search?q=" + java.net.URLEncoder.encode("$encT $encA", "UTF-8")
+            val searchUrl = "https://lrclib.net/api/search?q=" +
+                java.net.URLEncoder.encode("$cleanTitle $cleanArtist", "UTF-8")
             val searchReq = Request.Builder()
                 .url(searchUrl)
-                .header("User-Agent", "YTXMusic/1.0 (https://github.com/thinker/flashtube)")
+                .header("User-Agent", "YTXTube/1.1 (https://github.com/Koustubh12345/YTXTube)")
                 .build()
             Net.client.newCall(searchReq).execute().use { r ->
-                if (r.isSuccessful) {
-                    val text = r.body?.string().orEmpty()
-                    if (text.startsWith("[")) {
-                        val arr = JSONArray(text)
-                        var plain: LyricsDoc? = null
-                        for (i in 0 until arr.length()) {
-                            val entry = arr.optJSONObject(i) ?: continue
-                            val doc = entry.optString("syncedLyrics").takeIf { it.isNotBlank() }?.let(::parseLyrics)
-                            if (doc != null && doc.synced) return@withContext doc
-                            if (plain == null) {
-                                plain = entry.optString("plainLyrics").takeIf { it.isNotBlank() }?.let(::parseLyrics)
-                            }
+                if (!r.isSuccessful) return@runCatching
+                val text = r.body?.string().orEmpty()
+                if (!text.startsWith("[")) return@runCatching
+                val arr = JSONArray(text)
+                var bestSynced: LyricsDoc? = null
+                var bestDelta = Long.MAX_VALUE
+                var plain: LyricsDoc? = null
+                for (i in 0 until arr.length()) {
+                    val entry = arr.optJSONObject(i) ?: continue
+                    val doc = entry.optString("syncedLyrics").takeIf { it.isNotBlank() }?.let(::parseLyrics)
+                    if (doc != null && doc.synced) {
+                        val itemDuration = entry.optLong("duration", -1L)
+                        val delta = if (durationSec > 0 && itemDuration > 0) {
+                            kotlin.math.abs(itemDuration - durationSec)
+                        } else {
+                            0L
                         }
-                        if (plain != null) return@withContext plain
+                        if (delta < bestDelta) {
+                            bestDelta = delta
+                            bestSynced = doc
+                        }
                     }
+                    if (plain == null) {
+                        plain = entry.optString("plainLyrics").takeIf { it.isNotBlank() }?.let(::parseLyrics)
+                    }
+                }
+                if (bestSynced != null) {
+                    foundSynced = bestSynced
+                } else if (plainFallback == null) {
+                    plainFallback = plain
                 }
             }
         }
 
+        foundSynced?.let { return@withContext it }
+        plainFallback?.let { return@withContext it }
         return@withContext null
     }
 
@@ -570,6 +593,55 @@ object InnerTube {
         val trending = runCatching { YouTube.trending().videos.filter { it.durationSec in 1..180 } }.getOrDefault(emptyList())
         val mixed = (pool + trending).distinctBy { it.id }.shuffled()
         FeedPage(mixed, null)
+    }
+
+    /**
+     * A genuinely new batch for the Shorts refresh button. YouTube's Shorts feed is personalised
+     * through FEshorts / FEwhat_to_watch; walking those continuations keeps every refreshed batch
+     * in the same lane as what the viewer actually watches. No random topic searches.
+     */
+    suspend fun newShorts(seen: Set<String>, token: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        val out = LinkedHashMap<String, VideoItem>()
+        var next: String? = token
+
+        suspend fun walk(cursor: String?, maxPages: Int) {
+            var c = cursor
+            var pages = 0
+            while (c != null && pages < maxPages && out.size < 16) {
+                val page = runCatching {
+                    parseShorts(post("browse", JSONObject().put("continuation", c)))
+                }.getOrNull() ?: break
+                page.videos.filter { it.id !in seen }.forEach { out.putIfAbsent(it.id, it) }
+                if (page.next != null) next = page.next
+                c = page.next
+                pages++
+            }
+        }
+
+        // First keep walking the same personalised reel the viewer was already in.
+        walk(token, 3)
+
+        if (out.size < 10) {
+            // Top up from the same personalised shelves used by the initial feed.
+            for (browseId in listOf("FEshorts", "FEwhat_to_watch")) {
+                if (out.size >= 10) break
+                val page = runCatching {
+                    parseShorts(post("browse", JSONObject().put("browseId", browseId)))
+                }.getOrNull() ?: continue
+                page.videos.filter { it.id !in seen }.forEach { out.putIfAbsent(it.id, it) }
+                if (next == null) next = page.next
+                if (out.size < 10) walk(page.next, 2)
+            }
+        }
+
+        if (out.size < 6) {
+            // Signed-out / exhausted feed fallback: popular Shorts, never a random topic.
+            runCatching {
+                YouTube.trending().videos.filter { it.durationSec in 1..180 && it.id !in seen }
+            }.getOrDefault(emptyList()).forEach { out.putIfAbsent(it.id, it) }
+        }
+
+        FeedPage(out.values.toList(), next)
     }
 
     internal fun parseShorts(root: JSONObject): FeedPage {
@@ -1048,8 +1120,15 @@ object InnerTube {
         parseCommunity(root)
     }
 
+    suspend fun channelShorts(channelId: String, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        val body = if (continuation != null) JSONObject().put("continuation", continuation)
+        else JSONObject().put("browseId", channelId).put("params", CHANNEL_SHORTS_TAB)
+        parseShorts(postAny("browse", body))
+    }
+
 
     private const val CHANNEL_VIDEOS_TAB = "EgZ2aWRlb3PyBgQKAjoA"
+    private const val CHANNEL_SHORTS_TAB = "EgZzaG9ydHPyBgUKA5oBAA%3D%3D"
     private const val CHANNEL_LIVE_TAB = "EgZzdHJlYW1z8gYECgJ6AA%3D%3D"
     private const val CHANNEL_COMMUNITY_TAB = "Egljb21tdW5pdHnyBgQKAkoA"
     suspend fun subscriptionsFeed(next: String? = null) = browse("FEsubscriptions", next)

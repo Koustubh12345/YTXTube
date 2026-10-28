@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.C
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
@@ -27,10 +28,12 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 import androidx.media3.session.SessionToken
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 
 
@@ -174,6 +177,11 @@ class PlayerState(private val scope: CoroutineScope) {
 
     var fullscreen by mutableStateOf(false)
 
+    /** Portrait videos go edge-to-edge without rotating the device, exactly like YouTube. */
+    var portraitFullscreen by mutableStateOf(false)
+
+    val portraitVideo get() = videoAspect < 1.02f
+
     var sheet by mutableStateOf<PlayerSheet?>(null)
 
     var downloadFor by mutableStateOf<VideoItem?>(null)
@@ -187,6 +195,21 @@ class PlayerState(private val scope: CoroutineScope) {
     private var originalLike = LikeStatus.None
     var inWatchLater by mutableStateOf(false)
         private set
+
+    /** Audio tracks offered by the current video, Original first. */
+    var audioOptions by mutableStateOf<List<AudioTrackOption>>(emptyList())
+        private set
+
+    /** The cue text Media3's text renderer is currently showing, or null when captions are off. */
+    var captionText by mutableStateOf<String?>(null)
+        private set
+
+    private var likeOverrides by mutableStateOf<Map<String, LikeStatus>>(emptyMap())
+    private var likeDeltas by mutableStateOf<Map<String, Long>>(emptyMap())
+    private var dislikeDeltas by mutableStateOf<Map<String, Long>>(emptyMap())
+
+    val currentLike: LikeStatus
+        get() = current?.id?.let { likeOverrides[it] } ?: accountState?.like ?: LikeStatus.None
 
     var actionMessage by mutableStateOf<String?>(null)
 
@@ -209,6 +232,7 @@ class PlayerState(private val scope: CoroutineScope) {
     fun open(item: VideoItem, expand: Boolean = true) {
         isMusicMode = false
         AudioOnly.set(false)
+        runCatching { applyVideoTrack() }
         if (expand) expanded = true
         if (current?.id == item.id && error == null) return
         known[item.id] = item
@@ -226,6 +250,7 @@ class PlayerState(private val scope: CoroutineScope) {
     fun openMusicQueue(items: List<VideoItem>, index: Int, expand: Boolean = true) {
         val item = items.getOrNull(index) ?: return
         isMusicMode = true
+        applyVideoTrack()
         musicQueue = items.drop(index + 1).filter { it.id != item.id }
         if (expand) expanded = true
         if (current?.id == item.id && error == null) return
@@ -252,7 +277,7 @@ class PlayerState(private val scope: CoroutineScope) {
     private fun show(item: VideoItem, startPlayback: Boolean) {
         endHoldSpeed()
         openedAt = android.os.SystemClock.elapsedRealtime()
-        Log.i("FlashTubeTime", "open ${item.id}")
+        Log.i("YTXTubeTime", "open ${item.id}")
         if (startPlayback) Net.prewarmMediaConnection()
         current = item
         if (isMusicMode) RecentMusic.record(item)
@@ -268,8 +293,11 @@ class PlayerState(private val scope: CoroutineScope) {
         comments.clearFor(item.id)
         accountState = null
         inWatchLater = false
+        audioOptions = emptyList()
+        captionText = null
         speedPanelOpen = false
         videoZoom = 1f
+        portraitFullscreen = false
         if (item.localUri != null) {
 
             details = VideoDetails(
@@ -299,8 +327,9 @@ class PlayerState(private val scope: CoroutineScope) {
         loadJob = scope.launch {
             runCatching { YouTube.details(item.id) }
                 .onSuccess { d ->
-                    Log.i("FlashTubeTime", "details +${android.os.SystemClock.elapsedRealtime() - openedAt}ms")
+                    Log.i("YTXTubeTime", "details +${android.os.SystemClock.elapsedRealtime() - openedAt}ms")
                     details = d
+                    refreshTracks()
 
                     if (!aspectFromFrames) d.aspect?.let { videoAspect = it }
 
@@ -360,6 +389,8 @@ class PlayerState(private val scope: CoroutineScope) {
 
         replaceCurrent(player, item, positionMs = ResumeStore.startPosition(item.id))
         player.play()
+        applyCaptionSelection()
+        refreshTracks()
     }
 
     
@@ -531,26 +562,63 @@ class PlayerState(private val scope: CoroutineScope) {
     val displayLikes: Long
         get() {
             val base = details?.likes ?: return -1
-            val now = accountState?.like ?: return base
-            return base + when {
-                now == LikeStatus.Like && originalLike != LikeStatus.Like -> 1
-                now != LikeStatus.Like && originalLike == LikeStatus.Like -> -1
-                else -> 0
-            }
+            val delta = current?.id?.let { likeDeltas[it] } ?: 0L
+            return (base + delta).coerceAtLeast(0)
         }
 
+    val displayDislikes: Long
+        get() {
+            val base = details?.dislikes ?: return -1
+            if (base < 0) return -1
+            val delta = current?.id?.let { dislikeDeltas[it] } ?: 0L
+            return (base + delta).coerceAtLeast(0)
+        }
+
+    private fun likeWeight(status: LikeStatus): Long = when (status) {
+        LikeStatus.Like -> 1L
+        LikeStatus.Dislike -> -1L
+        LikeStatus.None -> 0L
+    }
+
+    private fun dislikeWeight(status: LikeStatus): Long = if (status == LikeStatus.Dislike) 1L else 0L
+
+    /**
+     * Tapping a thumb is optimistic for everyone, signed in or not. The visible count moves
+     * immediately; the network call only decides whether the choice survives a restart.
+     */
     fun setLike(target: LikeStatus) {
         val id = current?.id ?: return
-        val before = accountState ?: return
-        val next = if (before.like == target) LikeStatus.None else target
-        accountState = before.copy(like = next)
+        val before = currentLike
+        val next = if (before == target) LikeStatus.None else target
+        likeOverrides = likeOverrides + (id to next)
+        likeDeltas = likeDeltas + (id to ((likeDeltas[id] ?: 0L) + likeWeight(next) - likeWeight(before)))
+        dislikeDeltas = dislikeDeltas + (id to ((dislikeDeltas[id] ?: 0L) + dislikeWeight(next) - dislikeWeight(before)))
+        actionMessage = when (next) {
+            LikeStatus.Like -> "Liked"
+            LikeStatus.Dislike -> "Not for me"
+            LikeStatus.None -> "Rating removed"
+        }
+
+        if (!Account.signedIn) return
+        val previousAccount = accountState
+        accountState = previousAccount?.copy(like = next)
         scope.launch {
             runCatching { InnerTube.setLike(id, next) }
-                .onFailure { accountState = before; actionMessage = "Couldn't update your like." }
+                .onFailure {
+                    if (current?.id == id) {
+                        likeOverrides = likeOverrides + (id to before)
+                        likeDeltas = likeDeltas + (id to ((likeDeltas[id] ?: 0L) - likeWeight(next) + likeWeight(before)))
+                        dislikeDeltas = dislikeDeltas + (id to ((dislikeDeltas[id] ?: 0L) - dislikeWeight(next) + dislikeWeight(before)))
+                        accountState = previousAccount
+                        actionMessage = "Couldn't update your like."
+                    }
+                }
         }
     }
 
     fun toggleLike() = setLike(LikeStatus.Like)
+
+    fun toggleDislike() = setLike(LikeStatus.Dislike)
 
     fun toggleSubscribe() {
         val before = accountState ?: return
@@ -604,6 +672,88 @@ class PlayerState(private val scope: CoroutineScope) {
         details = details?.copy(quality = StreamSelection.pick(info).playedHeight?.let { "${it}p" })
     }
 
+    /** Refresh the audio-track list from the resolved stream info. */
+    fun refreshTracks() {
+        val id = current?.id ?: return
+        val cached = StreamCache.get(id)
+        if (cached != null) {
+            syncAudioPreference(cached)
+            audioOptions = StreamSelection.audioOptions(cached)
+            applyCaptionSelection()
+            return
+        }
+        scope.launch {
+            val info = withContext(Dispatchers.IO) {
+                runCatching { StreamCache.getOrLoad(id) }.getOrNull()
+            } ?: return@launch
+            if (current?.id != id) return@launch
+            syncAudioPreference(info)
+            audioOptions = StreamSelection.audioOptions(info)
+            applyCaptionSelection()
+        }
+    }
+
+    /** A saved language that this video does not offer falls back to Original, not silence. */
+    private fun syncAudioPreference(info: org.schabi.newpipe.extractor.stream.StreamInfo) {
+        val wanted = AudioTrackPreference.key ?: return
+        val offered = StreamSelection.audioTracks(info)
+        if (offered.none { it.key == wanted || wanted.startsWith(it.key) }) AudioTrackPreference.reset()
+    }
+
+    /**
+     * Swap the audio rendition without losing the place. The service re-reads the persisted
+     * preference when it builds the next media source.
+     */
+    fun setAudioTrack(option: AudioTrackOption?) {
+        AudioTrackPreference.set(if (option == null || option.isOriginal) null else option.key, option?.label ?: "Original")
+        val player = controller ?: return
+        val item = details?.item ?: current ?: return
+        val position = player.currentPosition
+        val playWhenReady = player.playWhenReady
+        replaceCurrent(player, item, position)
+        player.playWhenReady = playWhenReady
+        actionMessage = "Audio: ${option?.label ?: "Original"}"
+    }
+
+    fun setCaptions(on: Boolean) {
+        CaptionPreference.set(on)
+        if (!on) captionText = null
+        applyCaptionSelection()
+        actionMessage = if (on) "Captions on" else "Captions off"
+    }
+
+    /**
+     * Media3 owns caption timing and parsing. The subtitle tracks are already merged into the
+     * media source, so turning captions on is only a track-selection change.
+     */
+    private var captionSignature: String? = null
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun applyCaptionSelection() {
+        val player = controller ?: return
+        val on = CaptionPreference.enabled
+        val groups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
+        val wanted = CaptionPreference.languageTag
+        val group = groups.firstOrNull { g ->
+            (0 until g.length).any { g.getTrackFormat(it).language?.startsWith(wanted, ignoreCase = true) == true }
+        } ?: groups.firstOrNull()
+        val signature = "$on|$wanted|${groups.size}|${group?.let { groups.indexOf(it) }}"
+        if (signature == captionSignature) return
+        captionSignature = signature
+        runCatching {
+            var params = player.trackSelectionParameters.buildUpon()
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !on)
+                .setPreferredTextLanguage(if (on) wanted else null)
+                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+            if (on && group != null) {
+                params = params.setOverrideForType(
+                    androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0),
+                )
+            }
+            player.trackSelectionParameters = params.build()
+        }.onFailure { Log.w(TAG, "caption track selection", it) }
+    }
+
 
     fun retry() = current?.let { item -> StreamCache.invalidate(item.id); current = null; open(item) }
 
@@ -627,8 +777,9 @@ class PlayerState(private val scope: CoroutineScope) {
     fun seekTo(ms: Long) {
         val player = controller ?: return
         val max = player.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
-        player.seekTo(ms.coerceIn(0L, max))
-        positionMs = player.currentPosition
+        val target = ms.coerceIn(0L, max)
+        positionMs = target
+        player.seekTo(target)
     }
 
     fun beginScrubDragging() {
@@ -704,7 +855,9 @@ class PlayerState(private val scope: CoroutineScope) {
 
 
     fun setBackground(background: Boolean) {
+        if (wantBackground == background) return
         wantBackground = background
+        if (isMusicMode) return
         applyVideoTrack()
     }
 
@@ -719,7 +872,11 @@ class PlayerState(private val scope: CoroutineScope) {
 
     private fun applyVideoTrack() {
         runCatching {
-            val off = wantBackground || AudioOnly.enabled
+            // Music keeps its video track alive in the background. Toggling it off and on
+            // made the decoder re-init, which is the audible dip heard when reopening the
+            // app during background playback.
+            if (isMusicMode) return
+            val off = AudioOnly.enabled || wantBackground
             val player = controller ?: return
             if (player.trackSelectionParameters.disabledTrackTypes.contains(androidx.media3.common.C.TRACK_TYPE_VIDEO) == off) return
             Log.i(TAG, if (off) "video off (${if (AudioOnly.enabled) "audio only" else "background"})" else "video on")
@@ -735,6 +892,7 @@ class PlayerState(private val scope: CoroutineScope) {
         queue = emptyList()
         expanded = false
         fullscreen = false
+        portraitFullscreen = false
         sheet = null
         current = null
         details = null
@@ -770,7 +928,7 @@ class PlayerState(private val scope: CoroutineScope) {
         )
         current = item
         loadJob = scope.launch {
-            runCatching { YouTube.details(item.id) }.onSuccess { details = it; current = it.item }
+            runCatching { YouTube.details(item.id) }.onSuccess { details = it; current = it.item; refreshTracks() }
         }
     }
 
@@ -807,11 +965,20 @@ class PlayerState(private val scope: CoroutineScope) {
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             if (mediaItem != null) onPlayerMovedTo(mediaItem)
+            applyCaptionSelection()
+        }
+
+        override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
+            val text = cueGroup.cues
+                .mapNotNull { cue -> cue.text?.toString()?.takeIf { it.isNotBlank() } }
+                .joinToString("\n")
+            captionText = text.ifBlank { null }
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) = takeVideoSize(videoSize)
 
         override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            applyCaptionSelection()
             val vs = controller?.videoSize ?: return
             if (vs.width <= 0 || vs.height <= 0) return
             val w = (vs.width * vs.pixelWidthHeightRatio).roundToInt()
@@ -819,7 +986,7 @@ class PlayerState(private val scope: CoroutineScope) {
         }
 
         override fun onRenderedFirstFrame() {
-            Log.i("FlashTubeTime", "first frame +${android.os.SystemClock.elapsedRealtime() - openedAt}ms")
+            Log.i("YTXTubeTime", "first frame +${android.os.SystemClock.elapsedRealtime() - openedAt}ms")
             firstFrameRendered = true
         }
 
@@ -850,7 +1017,7 @@ class PlayerState(private val scope: CoroutineScope) {
     private fun describeFormat(width: Int, height: Int) {
         val tier = qualityTier(width, height)
         if (decodedHeight != tier) {
-            Log.i("FlashTubeTime", "now ${tier}p (${width}×${height}) at +${android.os.SystemClock.elapsedRealtime() - openedAt}ms")
+            Log.i("YTXTubeTime", "now ${tier}p (${width}×${height}) at +${android.os.SystemClock.elapsedRealtime() - openedAt}ms")
         }
         decodedHeight = tier
         val formats = controller?.currentTracks?.groups.orEmpty()
@@ -906,6 +1073,6 @@ fun rememberPlayerState(): PlayerState {
     return state
 }
 
-enum class PlayerSheet { Quality, Comments, Queue, Settings }
+enum class PlayerSheet { Quality, Comments, Queue, Settings, Speed, Audio }
 
-private const val TAG = "FlashTube"
+private const val TAG = "YTXTube"

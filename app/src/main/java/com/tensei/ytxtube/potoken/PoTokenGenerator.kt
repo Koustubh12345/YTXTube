@@ -2,7 +2,7 @@ package com.tensei.ytxtube.potoken
 
 import android.util.Log
 import android.webkit.CookieManager
-import com.tensei.ytxtube.FlashTubeApplication
+import com.tensei.ytxtube.YTXTubeApplication
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.TimeoutCancellationException
@@ -33,7 +33,7 @@ class PoTokenGenerator {
             Log.d(TAG, "Pre-initializing PoTokenWebView in background...")
             webPoTokenSessionId = "init-" + System.currentTimeMillis()
             webPoTokenGenerator =
-              PoTokenWebView.getNewPoTokenGenerator(FlashTubeApplication.appContext)
+              PoTokenWebView.getNewPoTokenGenerator(YTXTubeApplication.appContext)
             webPoTokenStreamingPot = webPoTokenGenerator!!.generatePoToken(webPoTokenSessionId!!)
           }
         }
@@ -112,7 +112,7 @@ class PoTokenGenerator {
           withContext(Dispatchers.Main) { webPoTokenGenerator?.close() }
 
 
-          webPoTokenGenerator = PoTokenWebView.getNewPoTokenGenerator(FlashTubeApplication.appContext)
+          webPoTokenGenerator = PoTokenWebView.getNewPoTokenGenerator(YTXTubeApplication.appContext)
 
 
 

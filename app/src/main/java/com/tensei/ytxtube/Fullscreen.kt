@@ -69,6 +69,11 @@ class OrientationController(private val activity: Activity) {
     }
 
     fun apply() {
+        if (TvMode.isTv) {
+            // TVs are physically landscape and must never be rotated into portrait.
+            activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            return
+        }
         activity.requestedOrientation = when {
             !playerOpen -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             forced == Forced.Landscape -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE

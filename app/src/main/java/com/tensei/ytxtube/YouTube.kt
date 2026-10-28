@@ -28,11 +28,13 @@ import org.schabi.newpipe.extractor.stream.Description
 import org.schabi.newpipe.extractor.stream.StreamInfo
 import org.schabi.newpipe.extractor.stream.StreamInfoItem
 import org.schabi.newpipe.extractor.stream.StreamType
+import org.schabi.newpipe.extractor.stream.SubtitlesStream
 import org.schabi.newpipe.extractor.stream.VideoStream
 import org.schabi.newpipe.extractor.localization.DateWrapper
 import java.io.IOException
 import java.time.Duration
 import java.time.Instant
+import java.util.Locale
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
@@ -289,6 +291,13 @@ object YouTube {
         })
     }
 
+    suspend fun channelShorts(channel: ChannelDetails, token: String?): FeedPage {
+        val page = InnerTube.channelShorts(channel.id, token)
+        return page.copy(videos = page.videos.map {
+            it.copy(channel = it.channel.ifBlank { channel.name }, avatar = it.avatar ?: channel.avatar, channelUrl = it.channelUrl ?: channel.url)
+        })
+    }
+
     suspend fun channelCommunity(channel: ChannelDetails, token: String?): CommunityPage {
         return InnerTube.channelCommunity(channel.id, token)
     }
@@ -354,7 +363,7 @@ object YouTube {
 
         is ContentNotAvailableException ->
             if (t.message.orEmpty().contains("member", ignoreCase = true) || t is org.schabi.newpipe.extractor.exceptions.PaidContentException)
-                "This is a members-only video. FlashTube can't play members-only videos yet."
+                "This is a members-only video. YTXTube can't play members-only videos yet."
             else "This video isn't available."
         is ReCaptchaException -> "YouTube is rate-limiting requests right now. Try again in a minute."
         is IOException -> "Couldn't reach YouTube. Check your connection."
@@ -421,11 +430,20 @@ object StreamCache {
     }
 
 
-    private val prefetcher = Executors.newSingleThreadExecutor()
+    /**
+     * Shorts and the next-up queue can resolve several videos at once; a single prefetch thread
+     * used to make the tapped video wait behind an unrelated prefetch. Four lanes keep the
+     * critical one moving without hammering YouTube.
+     */
+    private val prefetcher = Executors.newFixedThreadPool(4)
 
     fun prefetch(id: String) {
         if (get(id) != null || inflight.containsKey(id)) return
         prefetcher.execute { runCatching { getOrLoad(id) } }
+    }
+
+    fun prefetchAll(ids: Iterable<String>) {
+        ids.forEach(::prefetch)
     }
 }
 
@@ -461,10 +479,12 @@ val QUALITY_LADDER = intArrayOf(144, 240, 360, 480, 720, 1080, 1440, 2160, 4320)
 
 fun qualityTier(width: Int, height: Int): Int {
     if (height <= 0) return 0
-    val basis = if (width > 0 && width.toFloat() / height > 16f / 9f + 0.02f) {
-        width * 9 / 16
-    } else {
-        height
+    // Portrait video (Shorts) is sized by its short side: a 1080x1920 short is 1080p, not 2160p.
+    val basis = when {
+        width <= 0 -> height
+        width < height -> width
+        width.toFloat() / height > 16f / 9f + 0.02f -> width * 9 / 16
+        else -> height
     }
     return QUALITY_LADDER.minByOrNull { kotlin.math.abs(it - basis) } ?: basis
 }
@@ -506,18 +526,115 @@ object StreamSelection {
 
 
 
-        val audio = info.audioStreams
+        val audio = selectAudio(info)
+        val muxed = info.videoStreams
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
+            .maxByOrNull { it.height }
+        return Picked(video, audio, muxed, hls)
+    }
+
+    /**
+     * Every logical audio track the extractor can actually serve, Original first. One row per
+     * track (highest bitrate encoding), never one per itag; untagged entries are dropped once the
+     * response names real tracks, because that bucket is the same default audio arriving twice.
+     */
+    fun audioTracks(info: StreamInfo): List<AudioTrackOption> {
+        val usable = info.audioStreams.filter {
+            it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP
+        }
+        if (usable.isEmpty()) return emptyList()
+        val named = usable.any {
+            !it.audioTrackId.isNullOrBlank() || !it.audioTrackName.isNullOrBlank() || it.audioLocale != null
+        }
+        val byKey = LinkedHashMap<String, AudioStream>()
+        usable.sortedByDescending { it.averageBitrate }.forEach { stream ->
+            val key = audioTrackKey(stream)
+            if (named && key == "default") return@forEach
+            byKey.putIfAbsent(key, stream)
+        }
+        return byKey.values
             .sortedWith(
                 compareBy<AudioStream> { if (it.audioTrackType == null || it.audioTrackType == AudioTrackType.ORIGINAL) 0 else 1 }
                     .thenBy { if (it.format == MediaFormat.M4A) 0 else 1 }
                     .thenByDescending { it.averageBitrate },
             )
+            .map { stream ->
+                val original = stream.audioTrackType == null || stream.audioTrackType == AudioTrackType.ORIGINAL
+                AudioTrackOption(
+                    key = audioTrackKey(stream),
+                    label = audioTrackLabel(stream, original),
+                    detail = audioTrackDetail(stream, original),
+                    stream = stream,
+                )
+            }
+    }
+
+    /** The alternate languages shown in the sheet; Original is its own fixed first row. */
+    fun audioOptions(info: StreamInfo): List<AudioTrackOption> =
+        audioTracks(info).filterNot { it.isOriginal }
+
+    /**
+     * Audio selection. Original is the default on a fresh install and stays selected until the
+     * viewer explicitly chooses another track; a stale preference falls back to Original rather
+     * than leaving the video silent.
+     */
+    fun selectAudio(info: StreamInfo): AudioStream? {
+        val tracks = audioTracks(info)
+        if (tracks.isEmpty()) return null
+        val wanted = AudioTrackPreference.key
+        if (wanted != null) {
+            tracks.firstOrNull { it.key == wanted }?.let { return it.stream }
+            // Preferences written by the old key format carried the itag as a suffix.
+            tracks.firstOrNull { wanted.startsWith(it.key) }?.let { return it.stream }
+        }
+        return tracks.firstOrNull { it.isOriginal }?.stream ?: tracks.first().stream
+    }
+
+    /**
+     * Shorts always use the original audio, and prefer the highest adaptive video (up to 1080p)
+     * so the feed opens in high quality. A muxed stream is only the fallback when the video has
+     * no separable adaptive pair; it is usually capped at 360p/720p.
+     */
+    fun pickShorts(info: StreamInfo): Picked {
+        // Shorts are vertical: always take the best rendition the extractor offers, up to 4K.
+        val video = info.videoOnlyStreams
+            .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 && it.tier() <= 2160 }
+            .sortedWith(
+                compareByDescending<VideoStream> { it.height }
+                    .thenBy { if (it.codec?.startsWith("avc") == true) 0 else 1 },
+            )
             .firstOrNull()
+        val audio = audioTracks(info).firstOrNull { it.isOriginal }?.stream
+            ?: info.audioStreams.filter { it.isUrl }
+                .sortedWith(compareBy<AudioStream> { if (it.format == MediaFormat.M4A) 0 else 1 }.thenByDescending { it.averageBitrate })
+                .firstOrNull()
+        if (video != null && audio != null) return Picked(video, audio, null)
+
         val muxed = info.videoStreams
-            .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
-            .maxByOrNull { it.height }
-        return Picked(video, audio, muxed, hls)
+            .filter { it.isUrl && it.height > 0 }
+            .sortedWith(
+                compareByDescending<VideoStream> { it.height }
+                    .thenBy { if (it.codec?.startsWith("avc") == true) 0 else 1 },
+            )
+            .firstOrNull()
+        return Picked(null, null, muxed)
+    }
+
+    /** The best side-loadable caption track for the current caption language. */
+    fun subtitleFor(info: StreamInfo): SubtitlesStream? {
+        val usable = info.subtitles.filter {
+            it.isUrl && it.content.isNotBlank() && subtitleMimeType(it) != null
+        }
+        if (usable.isEmpty()) return null
+        val wanted = CaptionPreference.languageTag.lowercase(Locale.US)
+        return usable.firstOrNull { it.languageTag.lowercase(Locale.US).startsWith(wanted) && !it.isAutoGenerated }
+            ?: usable.firstOrNull { it.languageTag.lowercase(Locale.US).startsWith(wanted) }
+            ?: usable.firstOrNull { !it.isAutoGenerated }
+            ?: usable.first()
+    }
+
+    fun hasCaptions(info: StreamInfo): Boolean = info.subtitles.any {
+        it.isUrl && it.content.isNotBlank() && subtitleMimeType(it) != null
     }
 
     

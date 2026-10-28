@@ -27,7 +27,9 @@ import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CleaningServices
 import androidx.compose.material.icons.rounded.Code
 import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Security
+import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -55,6 +57,7 @@ fun SettingsScreen(
     onSignIn: () -> Unit,
     onSignedOut: () -> Unit,
     contentPadding: PaddingValues = PaddingValues(0.dp),
+    onCheckUpdate: () -> Unit = {},
 ) {
     val c = MaterialTheme.colorScheme
     val context = LocalContext.current
@@ -179,7 +182,7 @@ fun SettingsScreen(
                     val dark = isDarkTheme()
                     val choices = buildList {
                         if (ThemeSettings.wallpaperAvailable) add(null to "Wallpaper")
-                        FLASHTUBE_THEMES.forEach { add(it.hex to it.name) }
+                        YTX_THEMES.forEach { add(it.hex to it.name) }
                     }
 
                     Row(
@@ -311,7 +314,17 @@ fun SettingsScreen(
                 SettingsItem(
                     icon = Icons.Rounded.Info,
                     title = "Version",
-                    subtitle = "YTX Tube ${BuildConfig.VERSION_NAME}",
+                    subtitle = "YTXTube ${BuildConfig.VERSION_NAME}",
+                )
+
+                HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(horizontal = 12.dp))
+
+                SettingsItem(
+                    icon = Icons.Rounded.SystemUpdate,
+                    title = "Check for updates",
+                    subtitle = "New GitHub releases install from inside the app",
+                    onClick = onCheckUpdate,
+                    trailing = { RepoArrowButton(onClick = onCheckUpdate) },
                 )
 
                 HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(horizontal = 12.dp))
@@ -322,7 +335,7 @@ fun SettingsScreen(
                     }
                 }
                 val ytxRepo = "https://github.com/Koustubh12345/YTXTube"
-                val flashRepo = "https://github.com/justathinker/flashtube"
+
 
                 SettingsItem(
                     icon = Icons.Rounded.Code,
@@ -335,19 +348,26 @@ fun SettingsScreen(
                 HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(horizontal = 12.dp))
 
                 SettingsItem(
-                    icon = Icons.Rounded.Code,
-                    title = "Original FlashTube Repo",
-                    subtitle = "Original repo",
-                    onClick = { openRepo(flashRepo) },
-                    trailing = { RepoArrowButton { openRepo(flashRepo) } },
+                    icon = Icons.Rounded.Security,
+                    title = "Privacy & Open Source",
+                    subtitle = "Ad-free, with no tracker SDKs",
                 )
 
                 HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(horizontal = 12.dp))
 
+                val telegram = "https://t.me/getthefckoutofheree"
+                val openTelegram: () -> Unit = {
+                    val app = Intent(Intent.ACTION_VIEW, Uri.parse("tg://resolve?domain=getthefckoutofheree"))
+                    val web = Intent(Intent.ACTION_VIEW, Uri.parse(telegram))
+                    runCatching { context.startActivity(app) }
+                        .onFailure { runCatching { context.startActivity(web) } }
+                }
                 SettingsItem(
-                    icon = Icons.Rounded.Security,
-                    title = "Privacy & Open Source",
-                    subtitle = "Ad-free, with no tracker SDKs",
+                    icon = Icons.Rounded.Person,
+                    title = "Developer",
+                    subtitle = "@getthefckoutofheree",
+                    onClick = openTelegram,
+                    trailing = { RepoArrowButton(onClick = openTelegram) },
                 )
             }
         }

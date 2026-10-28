@@ -97,7 +97,7 @@ object SponsorBlock {
     fun fetch(videoId: String): List<Segment> {
         cache[videoId]?.let { return it }
         val segments = runCatching { request(videoId) }
-            .onFailure { Log.w("FlashTube", "SponsorBlock lookup failed for $videoId", it) }
+            .onFailure { Log.w("YTXTube", "SponsorBlock lookup failed for $videoId", it) }
             .getOrNull() ?: return emptyList()
         cache[videoId] = segments
         return segments
@@ -109,7 +109,7 @@ object SponsorBlock {
         val categories = JSONArray(Category.entries.map { it.key }).toString()
         val url = "https://sponsor.ajay.app/api/skipSegments/$prefix?categories=" +
             java.net.URLEncoder.encode(categories, "UTF-8") + "&actionType=skip"
-        val request = Request.Builder().url(url).header("User-Agent", "FlashTube/${BuildConfig.VERSION_NAME}").build()
+        val request = Request.Builder().url(url).header("User-Agent", "YTXTube/${BuildConfig.VERSION_NAME}").build()
         Net.client.newCall(request).execute().use { r ->
             if (r.code == 404) return emptyList()
             if (!r.isSuccessful) throw java.io.IOException("SponsorBlock ${r.code}")

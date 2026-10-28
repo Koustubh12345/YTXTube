@@ -61,7 +61,8 @@ class SecureStore(context: Context, name: String) {
 
     private companion object {
         const val KEYSTORE = "AndroidKeyStore"
-        const val ALIAS = "flashtube_account"
+        // Legacy keystore alias, kept so existing signed-in sessions survive the rebrand.
+    const val ALIAS = "flashtube_account"
         const val TRANSFORMATION = "AES/GCM/NoPadding"
         const val IV_BYTES = 12
     }

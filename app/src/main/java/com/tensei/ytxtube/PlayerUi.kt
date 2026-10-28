@@ -19,19 +19,25 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.runtime.SideEffect
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Column
@@ -192,6 +198,16 @@ fun PlayerScreen(
         }
     }
     val ambientColor by animateColorAsState(dominantColor, tween(600), label = "ambient")
+    val ambientMotion = androidx.compose.animation.core.rememberInfiniteTransition(label = "ambientDrift")
+    val ambientDrift by ambientMotion.animateFloat(
+        initialValue = 0f,
+        targetValue = 1f,
+        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+            animation = tween(14_000, easing = androidx.compose.animation.core.LinearEasing),
+            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+        ),
+        label = "ambientDriftValue",
+    )
 
     val isDark = isDarkTheme()
     val isAmoled = ThemeSettings.mode == "amoled"
@@ -224,6 +240,44 @@ fun PlayerScreen(
 
                 drawRect(lerpColor(miniColor, pageColor, ramp(p, 0f, 0.6f)))
             }
+            .drawBehind {
+                if (state.isMusicMode || size.width < 10f || size.height < 10f) return@drawBehind
+                val topStrength = if (isAmoled) 0.40f else if (isDark) 0.35f else 0.22f
+                val bodyStrength = if (isAmoled) 0.30f else if (isDark) 0.26f else 0.16f
+                val aspect = state.stageAspect.coerceAtLeast(0.5f)
+                val topRadius = (size.width * 0.95f).coerceAtLeast(10f)
+                // Live moving blur effect above video in status bar
+                drawRect(
+                    Brush.radialGradient(
+                        colors = listOf(ambientColor.copy(alpha = topStrength), Color.Transparent),
+                        center = Offset(size.width * (0.2f + 0.6f * ambientDrift), 0f),
+                        radius = topRadius,
+                    ),
+                )
+                // Color shade stretching down behind title, channel and fading away slowly after the like/action buttons row
+                val startY = top.toPx() + (size.width / aspect * 0.4f).coerceAtLeast(0f)
+                val glowReach = minOf(size.height * 0.58f, size.width * 1.35f).coerceAtLeast(startY + 50f)
+                drawRect(
+                    Brush.verticalGradient(
+                        colors = listOf(
+                            ambientColor.copy(alpha = bodyStrength * 0.85f),
+                            ambientColor.copy(alpha = bodyStrength * 0.65f),
+                            ambientColor.copy(alpha = bodyStrength * 0.25f),
+                            Color.Transparent,
+                        ),
+                        startY = startY,
+                        endY = glowReach,
+                    ),
+                )
+                val bottomRadius = (size.width * 0.85f).coerceAtLeast(10f)
+                drawRect(
+                    Brush.radialGradient(
+                        colors = listOf(ambientColor.copy(alpha = bodyStrength * 0.7f), Color.Transparent),
+                        center = Offset(size.width * (0.85f - 0.7f * ambientDrift), top.toPx() + size.width / aspect + 100f),
+                        radius = bottomRadius,
+                    ),
+                )
+            }
 
 
             .then(if (interactive) Modifier.pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } } else Modifier),
@@ -249,7 +303,7 @@ fun PlayerScreen(
             }
         } else {
         Column(Modifier.fillMaxSize()) {
-            Spacer(Modifier.height(top + StageTopGap))
+            Spacer(Modifier.height(top))
 
 
             Box(Modifier.zIndex(2f)) {
@@ -373,7 +427,7 @@ fun PlayerScreen(
 
         if (state.sheet == PlayerSheet.Comments) {
             val screenW = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
-            val videoBottom = top + StageTopGap + (screenW - StageSideGap * 2) / state.stageAspect
+            val videoBottom = top + top + (screenW - StageSideGap * 2) / state.stageAspect
             val item = state.details?.item
             CommentsPanel(
                 state.comments,
@@ -603,8 +657,8 @@ private fun Modifier.bleed(x: androidx.compose.ui.unit.Dp) = layout { measurable
 @Composable
 private fun AccountActions(state: PlayerState) {
     val signedIn = state.accountState != null
-    val like = state.accountState?.like ?: LikeStatus.None
-    val likes = if (signedIn) state.displayLikes else (state.details?.likes ?: 0L)
+    val like = state.currentLike
+    val likes = state.displayLikes
     var lastLikes by remember { mutableStateOf(likes) }
     val rising = likes >= lastLikes
     SideEffect { lastLikes = likes }
@@ -618,19 +672,17 @@ private fun AccountActions(state: PlayerState) {
             shape = RoundedCornerShape(topStart = 18.dp, bottomStart = 18.dp, topEnd = 6.dp, bottomEnd = 6.dp),
             description = "Like",
         ) {
-            if (signedIn) state.setLike(LikeStatus.Like)
-            else state.actionMessage = "Sign in to like videos"
+            state.toggleLike()
         }
         ActionPill(
             icon = if (like == LikeStatus.Dislike) Icons.Rounded.ThumbDown else Icons.Outlined.ThumbDown,
-            label = state.details?.dislikes?.takeIf { it >= 0 }?.let { formatCount(it) },
+            label = state.displayDislikes.takeIf { it >= 0 }?.let { formatCount(it) },
             active = like == LikeStatus.Dislike,
             flourish = Flourish.Droop,
             shape = RoundedCornerShape(topStart = 6.dp, bottomStart = 6.dp, topEnd = 18.dp, bottomEnd = 18.dp),
             description = "Dislike",
         ) {
-            if (signedIn) state.setLike(LikeStatus.Dislike)
-            else state.actionMessage = "Sign in to dislike"
+            state.toggleDislike()
         }
     }
     ActionPill(
@@ -754,7 +806,7 @@ fun MiniPlayer(
             .clip(shape)
     ) {
         if (state.isMusicMode) {
-            BitChordMiniDetails(state = state, interactive = true)
+            BitChordMiniDetails(state = state, interactive = true, backdrop = backdrop)
         } else {
             Row(
                 Modifier.fillMaxSize().padding(start = MiniThumbStart, end = 4.dp),
@@ -943,7 +995,7 @@ fun BitChordMusicPlayer(
         if (showLyrics && lyrics == null && !lyricsLoading) {
             lyricsLoading = true
             lyrics = runCatching {
-                InnerTube.musicLyrics(item.id, item.title, item.channel)
+                InnerTube.musicLyrics(item.id, item.title, item.channel, item.durationSec)
             }.getOrNull()
             lyricsLoading = false
         }
@@ -1036,7 +1088,7 @@ fun BitChordMusicPlayer(
                 }
             }
 
-            Spacer(Modifier.weight(0.5f))
+            Spacer(Modifier.weight(if (showLyrics) 0.12f else 0.5f))
 
 
             if (showLyrics) {
@@ -1046,10 +1098,11 @@ fun BitChordMusicPlayer(
                     positionMs = state.positionMs,
                     englishScript = englishScript,
                     onToggleEnglish = { englishScript = !englishScript },
+                    onSeek = { state.seekTo(it) },
                     onDismiss = { showLyrics = false },
                     modifier = Modifier
                         .fillMaxWidth()
-                        .weight(3.5f),
+                        .weight(if (showLyrics) 7f else 3.5f),
                 )
             } else {
                 Box(
@@ -1089,7 +1142,7 @@ fun BitChordMusicPlayer(
                 }
             }
 
-            Spacer(Modifier.weight(0.5f))
+            Spacer(Modifier.weight(if (showLyrics) 0.12f else 0.5f))
 
 
             Row(
@@ -1260,43 +1313,45 @@ fun BitChordMusicPlayer(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            if (!showLyrics) {
+                Spacer(Modifier.height(16.dp))
 
 
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 8.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-
-                Box(
+                Row(
                     modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(c.onSurface.copy(alpha = 0.08f))
-                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        "HQ AUDIO · 256 KBPS AAC",
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 0.8.sp,
-                        color = c.onSurfaceVariant,
-                    )
-                }
+
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(c.onSurface.copy(alpha = 0.08f))
+                            .padding(horizontal = 10.dp, vertical = 5.dp),
+                    ) {
+                        Text(
+                            "HQ AUDIO · 256 KBPS AAC",
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.Bold,
+                            letterSpacing = 0.8.sp,
+                            color = c.onSurfaceVariant,
+                        )
+                    }
 
 
-                IconButton(
-                    onClick = { showLyrics = !showLyrics },
-                    modifier = Modifier.size(40.dp),
-                ) {
-                    Icon(
-                        Icons.Rounded.Lyrics,
-                        contentDescription = "Lyrics",
-                        tint = if (showLyrics) c.primary else c.onSurfaceVariant.copy(alpha = 0.7f),
-                        modifier = Modifier.size(22.dp),
-                    )
+                    IconButton(
+                        onClick = { showLyrics = !showLyrics },
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            Icons.Rounded.Lyrics,
+                            contentDescription = "Lyrics",
+                            tint = if (showLyrics) c.primary else c.onSurfaceVariant.copy(alpha = 0.7f),
+                            modifier = Modifier.size(22.dp),
+                        )
+                    }
                 }
             }
         }
@@ -1337,12 +1392,27 @@ private fun MusicLyricsPanel(
     positionMs: Long,
     englishScript: Boolean,
     onToggleEnglish: () -> Unit,
+    onSeek: (Long) -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = MaterialTheme.colorScheme
+    var entered by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { entered = true }
+    val entrance by animateFloatAsState(
+        targetValue = if (entered) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.82f, stiffness = 330f),
+        label = "lyrics-entrance",
+    )
     Box(
         modifier = modifier
+            .graphicsLayer {
+                alpha = entrance
+                val s = 0.95f + 0.05f * entrance
+                scaleX = s
+                scaleY = s
+                translationY = (1f - entrance) * 22.dp.toPx()
+            }
             .clip(RoundedCornerShape(24.dp))
             .background(c.surfaceContainerHigh.copy(alpha = 0.8f))
             .padding(start = 16.dp, end = 10.dp, top = 14.dp, bottom = 8.dp),
@@ -1419,6 +1489,7 @@ private fun MusicLyricsPanel(
                     lyrics = lyrics,
                     positionMs = positionMs,
                     englishScript = englishScript,
+                    onSeek = onSeek,
                 )
                 else -> Column(
                     Modifier
@@ -1444,37 +1515,114 @@ private fun SyncedLyrics(
     lyrics: LyricsDoc,
     positionMs: Long,
     englishScript: Boolean,
+    onSeek: (Long) -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
 
     val lines = remember(lyrics, englishScript) {
         lyrics.lines.map { if (englishScript) it.copy(text = transliterate(it.text)) else it }
     }
-    val current = remember(lines, positionMs) {
-        lines.indexOfLast { it.timeMs in 0..positionMs }
-    }
+    val current = lines.indexOfLast { it.timeMs in 0..positionMs }
     val listState = rememberLazyListState()
-    LaunchedEffect(current) {
-        if (current >= 0) listState.animateScrollToItem((current - 2).coerceAtLeast(0))
-    }
-    LazyColumn(
-        state = listState,
-        modifier = Modifier.fillMaxSize().padding(end = 8.dp),
-        contentPadding = PaddingValues(vertical = 64.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        itemsIndexed(lines, key = { i, line -> "$i-${line.timeMs}" }) { index, line ->
-            val active = index == current
-            Text(
-                line.text,
-                fontSize = if (active) 18.5.sp else 15.5.sp,
-                lineHeight = if (active) 26.sp else 22.sp,
-                fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
-                color = if (active) c.onSurface
-                        else c.onSurfaceVariant.copy(alpha = 0.52f),
-                modifier = Modifier.fillMaxWidth(),
-            )
+    val dragged by listState.interactionSource.collectIsDraggedAsState()
+
+    // Apple Music keeps the line being sung pinned to the middle of the pane and glides there
+    // with a soft spring instead of jumping. A short lead makes the highlight land with the
+    // first syllable rather than a beat after it.
+    LaunchedEffect(current, dragged) {
+        if (current < 0 || dragged) return@LaunchedEffect
+        val info = listState.layoutInfo
+        val center = (info.viewportStartOffset + info.viewportEndOffset) / 2f
+        val visible = info.visibleItemsInfo.firstOrNull { it.index == current }
+        if (visible != null) {
+            val delta = visible.offset + visible.size / 2f - center
+            if (kotlin.math.abs(delta) > 1f) {
+                listState.animateScrollBy(
+                    delta,
+                    spring(dampingRatio = 0.9f, stiffness = 210f),
+                )
+            }
+        } else {
+            listState.scrollToItem(current)
+            val settled = listState.layoutInfo
+            val item = settled.visibleItemsInfo.firstOrNull { it.index == current }
+            if (item != null) {
+                val mid = (settled.viewportStartOffset + settled.viewportEndOffset) / 2f
+                listState.animateScrollBy(
+                    item.offset + item.size / 2f - mid,
+                    spring(dampingRatio = 0.9f, stiffness = 210f),
+                )
+            }
         }
+    }
+
+    BoxWithConstraints(Modifier.fillMaxSize().padding(end = 8.dp)) {
+        val edge = (maxHeight / 2 - 16.dp).coerceAtLeast(20.dp)
+        LazyColumn(
+            state = listState,
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(vertical = edge),
+        ) {
+            itemsIndexed(lines, key = { i, line -> "$i-${line.timeMs}" }) { index, line ->
+                val active = index == current
+                val activation by animateFloatAsState(
+                    targetValue = if (active) 1f else 0f,
+                    animationSpec = spring(dampingRatio = 0.62f, stiffness = 430f),
+                    label = "lyric-line",
+                )
+                val resting = when {
+                    index < current -> 0.7f
+                    else -> 0.58f
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { if (line.timeMs >= 0) onSeek(line.timeMs) }
+                        .padding(vertical = 7.dp),
+                ) {
+                    Text(
+                        text = line.text,
+                        color = lerpColor(
+                            c.onSurfaceVariant.copy(alpha = resting),
+                            c.onSurface,
+                            activation,
+                        ),
+                        fontSize = 17.sp,
+                        lineHeight = 24.sp,
+                        fontWeight = if (active) FontWeight.Bold else FontWeight.SemiBold,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .graphicsLayer {
+                                val scale = 0.95f + 0.11f * activation
+                                scaleX = scale
+                                scaleY = scale
+                                transformOrigin = TransformOrigin(0f, 0.5f)
+                                alpha = 0.8f + 0.2f * activation
+                            },
+                    )
+                }
+            }
+        }
+
+        // Soft edges so upcoming and finished lines dissolve instead of being cut off.
+        val fade = c.surfaceContainerHigh.copy(alpha = 0.82f)
+        Box(
+            Modifier
+                .align(Alignment.TopCenter)
+                .fillMaxWidth()
+                .height(30.dp)
+                .background(Brush.verticalGradient(listOf(fade, fade.copy(alpha = 0f)))),
+        )
+        Box(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(30.dp)
+                .background(Brush.verticalGradient(listOf(fade.copy(alpha = 0f), fade))),
+        )
     }
 }
 
@@ -1488,9 +1636,29 @@ private fun transliterate(text: String): String {
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.BoxScope.BitChordMiniDetails(state: PlayerState, interactive: Boolean) {
+private fun androidx.compose.foundation.layout.BoxScope.BitChordMiniDetails(
+    state: PlayerState,
+    interactive: Boolean,
+    backdrop: Backdrop? = null,
+) {
     val c = MaterialTheme.colorScheme
     val item = state.current ?: return
+    val glassCircle = if (backdrop != null) {
+        Modifier
+            .clip(CircleShape)
+            .liquidGlass(
+                backdrop,
+                glassSpec(
+                    shape = CircleShape,
+                    tint = glassFill(0.45f),
+                    blur = 12.dp,
+                    refractionHeight = 7.dp,
+                    refractionAmount = 10.dp,
+                ),
+            )
+    } else {
+        Modifier
+    }
     Row(
         Modifier
             .fillMaxSize()
@@ -1531,7 +1699,8 @@ private fun androidx.compose.foundation.layout.BoxScope.BitChordMiniDetails(stat
         Box(
             Modifier
                 .size(38.dp)
-                .pressable(enabled = interactive, onClick = state::togglePlay),
+                .pressable(enabled = interactive, onClick = state::togglePlay)
+                .then(glassCircle),
             contentAlignment = Alignment.Center,
         ) {
             if (state.isBuffering) {
@@ -1553,7 +1722,8 @@ private fun androidx.compose.foundation.layout.BoxScope.BitChordMiniDetails(stat
         Box(
             Modifier
                 .size(38.dp)
-                .pressable(enabled = interactive, onClick = state::skipNext),
+                .pressable(enabled = interactive, onClick = state::skipNext)
+                .then(glassCircle),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -1567,7 +1737,8 @@ private fun androidx.compose.foundation.layout.BoxScope.BitChordMiniDetails(stat
         Box(
             Modifier
                 .size(36.dp)
-                .pressable(enabled = interactive, onClick = state::close),
+                .pressable(enabled = interactive, onClick = state::close)
+                .then(glassCircle),
             contentAlignment = Alignment.Center,
         ) {
             Icon(

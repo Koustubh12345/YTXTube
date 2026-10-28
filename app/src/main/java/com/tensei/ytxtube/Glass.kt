@@ -3,6 +3,7 @@ package com.tensei.ytxtube
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -32,6 +33,9 @@ fun glassFill(alpha: Float = 1f): Color {
     return if (dark) Color(0xFF121212).copy(alpha = 0.38f * alpha)
     else Color(0xFFFAFAFA).copy(alpha = 0.34f * alpha)
 }
+
+/** The backdrop captured behind the player, used by in-player liquid glass controls. */
+val LocalGlassBackdrop = staticCompositionLocalOf<Backdrop?> { null }
 
 @Immutable
 data class GlassSpec(

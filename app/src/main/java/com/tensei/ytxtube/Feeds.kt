@@ -238,7 +238,13 @@ fun FeedList(
     PullToRefresh(enabled = pullToRefresh, refreshing = feed.refreshing, onRefresh = feed::refresh, topPadding = indicatorTop) {
     LazyColumn(state = list, contentPadding = contentPadding) {
         header()
-        items(listVideos, key = { it.id }) { video -> VideoCard(video, onClick = { onOpen(video) }) }
+        items(listVideos, key = { it.id }) { video ->
+            VideoCard(
+                video,
+                onClick = { onOpen(video) },
+                modifier = Modifier.animateItem(),
+            )
+        }
         when {
 
 

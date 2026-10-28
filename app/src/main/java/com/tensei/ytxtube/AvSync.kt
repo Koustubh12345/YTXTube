@@ -104,7 +104,7 @@ object AvSync {
         val next = median.coerceIn(-MAX_OFFSET_US, MAX_OFFSET_US)
         if (abs(next - offsetUs) >= HYSTERESIS_US) {
             Log.i(
-                "FlashTube",
+                "YTXTube",
                 "AV sync: frames show ${abs(median) / 1000} ms ${if (median < 0) "early" else "late"} " +
                     "(${1_000_000_000L / framePeriodNs} Hz); video clock shifted ${next / 1000} ms",
             )
