@@ -349,7 +349,6 @@ fun YtxTubeApp() {
             androidx.compose.runtime.movableContentOf { m: Modifier -> VideoSurface(player.controller, m) }
         }
         CompositionLocalProvider(
-            LocalGlassBackdrop provides pageBackdrop,
             LocalVideoSurface provides if (pip.active) NoVideoSurface else sharedSurface,
             LocalPictureInPicture provides pip,
             LocalVideoMenu provides { optionsFor = it },

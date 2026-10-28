@@ -399,9 +399,9 @@ fun UpdateOverlay(state: UpdateState, backdrop: Backdrop) {
                     Text(
                         update?.notes?.trim()?.ifBlank { "Bug fixes and performance improvements." }
                             ?: "Bug fixes and performance improvements.",
-                        color = c.onSurfaceVariant,
-                        fontSize = 13.sp,
-                        lineHeight = 19.sp,
+                        color = c.onSurface.copy(alpha = 0.92f),
+                        fontSize = 13.5.sp,
+                        lineHeight = 20.sp,
                         maxLines = 9,
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier

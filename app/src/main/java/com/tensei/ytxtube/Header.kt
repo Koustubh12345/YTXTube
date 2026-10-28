@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.statusBars
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -34,6 +35,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.Velocity
 import androidx.compose.ui.unit.dp
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.launch
 
 
@@ -87,8 +90,11 @@ fun CollapsingHeaderLayout(
     }
 
     val statusTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    val headerBackdrop = rememberLayerBackdrop()
     Box(Modifier.fillMaxSize().nestedScroll(connection)) {
-        content(with(density) { headerPx.toDp() })
+        Box(Modifier.fillMaxSize().layerBackdrop(headerBackdrop)) {
+            content(with(density) { headerPx.toDp() })
+        }
 
         val page = c.surface
         val vignette = remember(page) { vignetteBrush(page, opaqueAtTop = true) }
@@ -110,7 +116,9 @@ fun CollapsingHeaderLayout(
                     alpha = if (headerPx > 0) 1f - 0.5f * (-offset.value / headerPx).coerceIn(0f, 1f) else 1f
                 }
                 .background(c.surface),
-        ) { header() }
+        ) {
+            CompositionLocalProvider(LocalGlassBackdrop provides headerBackdrop) { header() }
+        }
     }
 }
 
