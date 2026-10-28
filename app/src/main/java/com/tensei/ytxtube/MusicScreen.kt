@@ -56,6 +56,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -74,7 +75,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -83,6 +86,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
@@ -320,12 +325,14 @@ fun MusicScreen(
                 contentPadding = contentPadding,
             )
         } else {
-            Column(Modifier.fillMaxSize()) {
-                MusicScreenHeader(
-                    onSearch = { isSearching = true },
-                    onAccount = onAccount,
-                )
-                when {
+            val headerBackdrop = rememberLayerBackdrop()
+            var headerHeight by remember { mutableIntStateOf(0) }
+            val density = LocalDensity.current
+            Box(Modifier.fillMaxSize()) {
+                Box(Modifier.fillMaxSize().layerBackdrop(headerBackdrop)) {
+                    Column(Modifier.fillMaxSize()) {
+                        Spacer(Modifier.height(with(density) { headerHeight.toDp() }))
+                        when {
                     state.loading && state.shelves.isEmpty() && state.recentPlays.isEmpty() -> {
                         Box(
                             modifier = Modifier
@@ -466,6 +473,15 @@ fun MusicScreen(
                         }
                     }
                 }
+                    }
+                }
+                CompositionLocalProvider(LocalGlassBackdrop provides headerBackdrop) {
+                    MusicScreenHeader(
+                        onSearch = { isSearching = true },
+                        onAccount = onAccount,
+                        modifier = Modifier.onSizeChanged { headerHeight = it.height },
+                    )
+                }
             }
         }
 
@@ -491,11 +507,13 @@ fun MusicScreen(
 private fun MusicScreenHeader(
     onSearch: () -> Unit,
     onAccount: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val c = MaterialTheme.colorScheme
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(modifier)
             .statusBarsPadding()
             .padding(horizontal = 16.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
