@@ -199,11 +199,35 @@ fun HeaderActions(onSearch: () -> Unit, onAccount: () -> Unit) {
 @Composable
 fun AccountAction(onClick: () -> Unit) {
     val profile = Account.profile
-    if (profile == null) {
-        CircleAction(Icons.Rounded.AccountCircle, "Sign in", onClick)
+    val c = MaterialTheme.colorScheme
+    val backdrop = LocalGlassBackdrop.current
+    val glass = if (backdrop != null) {
+        Modifier.liquidGlass(
+            backdrop,
+            glassSpec(
+                shape = CircleShape,
+                tint = c.surfaceContainerHighest.copy(alpha = 0.46f),
+                blur = 20.dp,
+                refractionHeight = 12.dp,
+                refractionAmount = 18.dp,
+            ),
+        )
     } else {
-        Box(Modifier.size(44.dp).pressable(onClick = onClick), contentAlignment = Alignment.Center) {
-            ChannelAvatar(profile.avatar, profile.name, size = 40)
+        Modifier.background(c.surfaceContainerHigh)
+    }
+    if (profile == null) {
+        Box(
+            Modifier.size(42.dp).pressable(onClick = onClick).clip(CircleShape).then(glass),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(Icons.Rounded.AccountCircle, "Sign in", tint = c.onSurface, modifier = Modifier.size(23.dp))
+        }
+    } else {
+        Box(
+            Modifier.size(46.dp).pressable(onClick = onClick).clip(CircleShape).then(glass).padding(4.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            ChannelAvatar(profile.avatar, profile.name, size = 38)
         }
     }
 }

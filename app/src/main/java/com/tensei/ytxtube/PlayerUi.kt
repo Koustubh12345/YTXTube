@@ -794,7 +794,7 @@ fun MiniPlayer(
                         effects = {
                             vibrancy()
                             blur(18f.dp.toPx())
-                            lens(18f.dp.toPx(), 18f.dp.toPx())
+                            lens(18f.dp.toPx(), 18f.dp.toPx(), chromaticAberration = true)
                         },
                         onDrawSurface = { drawRect(glassTint) },
                     )

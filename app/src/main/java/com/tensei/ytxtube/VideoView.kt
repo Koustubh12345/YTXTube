@@ -570,7 +570,7 @@ fun VideoContent(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     if (fullscreen) {
-                        GlassButton(Icons.AutoMirrored.Rounded.ArrowBack, "Exit fullscreen", enabled, size = 32.dp, iconSize = 20.dp) {
+                        GlassButton(Icons.AutoMirrored.Rounded.ArrowBack, "Exit fullscreen", enabled, size = 32.dp, iconSize = 20.dp, backdrop = videoBackdrop) {
                             touched()
                             onToggleFullscreen()
                         }
@@ -585,7 +585,7 @@ fun VideoContent(
                             modifier = Modifier.weight(1f),
                         )
                     } else {
-                        GlassButton(Icons.Rounded.KeyboardArrowDown, "Minimize", enabled, size = 32.dp, iconSize = 22.dp) {
+                        GlassButton(Icons.Rounded.KeyboardArrowDown, "Minimize", enabled, size = 32.dp, iconSize = 22.dp, backdrop = videoBackdrop) {
                             touched()
                             onCollapse()
                         }
@@ -600,6 +600,7 @@ fun VideoContent(
                         size = 32.dp,
                         iconSize = 18.dp,
                         tinted = state.zoomToFill,
+                        backdrop = videoBackdrop,
                     ) {
                         touched()
                         state.toggleZoomToFill()
@@ -608,7 +609,7 @@ fun VideoContent(
 
 
                     if (pip?.supported == true) {
-                        GlassButton(Icons.Rounded.PictureInPictureAlt, "Picture-in-picture", enabled, size = 32.dp, iconSize = 18.dp) {
+                        GlassButton(Icons.Rounded.PictureInPictureAlt, "Picture-in-picture", enabled, size = 32.dp, iconSize = 18.dp, backdrop = videoBackdrop) {
                             controlsVisible = false
                             if (!pip.enter(state.videoAspect)) state.actionMessage = "Picture-in-picture is turned off for YTXTube in Settings."
                         }
@@ -616,7 +617,7 @@ fun VideoContent(
                     }
 
 
-                    GlassButton(Icons.Rounded.Settings, "Playback settings", enabled, size = 32.dp, iconSize = 20.dp) {
+                    GlassButton(Icons.Rounded.Settings, "Playback settings", enabled, size = 32.dp, iconSize = 20.dp, backdrop = videoBackdrop) {
                         touched()
                         state.sheet = PlayerSheet.Settings
                     }
@@ -687,6 +688,7 @@ fun VideoContent(
                             size = 34.dp,
                             iconSize = 22.dp,
                             tinted = false,
+                            backdrop = videoBackdrop,
                         ) { onToggleFullscreen() }
                     }
                 }
