@@ -1079,21 +1079,96 @@ object InnerTube {
 
 
 
+    private val POPULAR_TOPICS = listOf(
+        "Trending",
+        "Popular videos",
+        "Top music hits",
+        "Viral videos",
+        "Gaming highlights",
+        "New movie trailers",
+        "Technology news",
+        "Podcasts",
+        "Comedy clips",
+        "Documentary",
+        "Sports highlights",
+        "Science",
+        "Animation",
+        "Auto and vehicles",
+        "Gadget reviews",
+        "Live events",
+    )
+
     suspend fun homeFeed(next: String? = null): FeedPage = withContext(Dispatchers.IO) {
-        if (Account.signedIn) {
+        // Signed in: this is the real personalised FEwhat_to_watch feed.
+        if (Account.signedIn && (next == null || !next.startsWith("anon_feed:"))) {
             val body = if (next != null) JSONObject().put("continuation", next)
                        else JSONObject().put("browseId", "FEwhat_to_watch")
-            parseFeed(post("browse", body))
-        } else {
-            val trending = runCatching { YouTube.trending(next) }.getOrNull()
-            if (trending != null && trending.videos.isNotEmpty()) {
-                trending
-            } else {
-                val topics = listOf("Trending", "Popular videos", "New music", "Gaming", "Viral")
-                val searchList = runCatching { YouTube.search(topics.random()) }.getOrDefault(emptyList())
-                FeedPage(searchList, null)
+            val personal = runCatching { parseFeed(post("browse", body)) }.getOrNull()
+            if (personal != null && (personal.videos.isNotEmpty() || personal.next != null)) {
+                return@withContext personal
             }
         }
+
+        // Signed out (or the personalised request failed/ended): load unlimited infinite feed
+        loadAnonymousInfiniteHomeFeed(next)
+    }
+
+    private suspend fun loadAnonymousInfiniteHomeFeed(next: String?): FeedPage {
+        // Initial page: start with current real Trending videos
+        if (next == null) {
+            val trending = runCatching { YouTube.trending(null) }.getOrNull()
+            if (trending != null && trending.videos.isNotEmpty()) {
+                val nextToken = if (!trending.next.isNullOrBlank()) "anon_feed:trend:${trending.next}" else "anon_feed:0:start"
+                return FeedPage(trending.videos, nextToken)
+            }
+            val firstTopic = runCatching { YouTube.searchPage(POPULAR_TOPICS[0], null) }.getOrNull()
+            if (firstTopic != null && firstTopic.videos.isNotEmpty()) {
+                val nextToken = if (!firstTopic.next.isNullOrBlank()) "anon_feed:0:${firstTopic.next}" else "anon_feed:1:start"
+                return FeedPage(firstTopic.videos, nextToken)
+            }
+            val searchFallback = runCatching { YouTube.search("Trending") }.getOrDefault(emptyList())
+            return FeedPage(searchFallback, "anon_feed:1:start")
+        }
+
+        // Continuing pagination token: "anon_feed:<topicIndexOrTrend>:<pageUrlOrMarker>"
+        val parts = next.removePrefix("anon_feed:").split(":", limit = 2)
+        val categoryOrIdx = parts.getOrNull(0) ?: "0"
+        val cursor = parts.getOrNull(1)
+
+        if (categoryOrIdx == "trend" && !cursor.isNullOrBlank() && cursor != "start") {
+            val moreTrending = runCatching { YouTube.trending(cursor) }.getOrNull()
+            if (moreTrending != null && moreTrending.videos.isNotEmpty()) {
+                val nextToken = if (!moreTrending.next.isNullOrBlank()) "anon_feed:trend:${moreTrending.next}" else "anon_feed:0:start"
+                return FeedPage(moreTrending.videos, nextToken)
+            }
+        }
+
+        val topicIdx = categoryOrIdx.toIntOrNull() ?: 0
+        val pageUrl = if (cursor == "start") null else cursor
+
+        // Try consecutive topics to guarantee fresh results even if a query returns empty
+        for (attempt in 0..3) {
+            val currentIdx = (topicIdx + attempt) % POPULAR_TOPICS.size
+            val query = POPULAR_TOPICS[currentIdx]
+            val pageToFetch = if (attempt == 0) pageUrl else null
+
+            val result = runCatching { YouTube.searchPage(query, pageToFetch) }.getOrNull()
+            if (result != null && result.videos.isNotEmpty()) {
+                val nextToken = if (!result.next.isNullOrBlank()) {
+                    "anon_feed:$currentIdx:${result.next}"
+                } else {
+                    val nextIdx = (currentIdx + 1) % POPULAR_TOPICS.size
+                    "anon_feed:$nextIdx:start"
+                }
+                return FeedPage(result.videos, nextToken)
+            }
+        }
+
+        // Infinite fallback: query a random topic so scrolling never terminates
+        val randomTopic = POPULAR_TOPICS.random()
+        val fallbackVideos = runCatching { YouTube.search(randomTopic) }.getOrDefault(emptyList())
+        val nextIdx = (topicIdx + 1) % POPULAR_TOPICS.size
+        return FeedPage(fallbackVideos, "anon_feed:$nextIdx:start")
     }
 
     suspend fun channelVideos(channelId: String, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {

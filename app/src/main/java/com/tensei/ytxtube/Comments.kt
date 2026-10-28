@@ -268,7 +268,7 @@ class CommentsState(private val scope: CoroutineScope) {
 
 
 @Composable
-fun CommentsCard(state: CommentsState, onOpen: () -> Unit) {
+fun CommentsCard(state: CommentsState, onOpen: () -> Unit, live: Boolean = false) {
     val c = MaterialTheme.colorScheme
     val shape = RoundedCornerShape(12.dp)
     val first = state.comments.firstOrNull()
@@ -276,37 +276,53 @@ fun CommentsCard(state: CommentsState, onOpen: () -> Unit) {
         modifier = Modifier
             .padding(top = 10.dp)
             .fillMaxWidth()
-            .pressable(enabled = state.comments.isNotEmpty() || (Account.signedIn && !state.disabled && !state.loading), pressedScale = 0.98f, onClick = onOpen)
+            .pressable(
+                enabled = live || state.comments.isNotEmpty() || (Account.signedIn && !state.disabled && !state.loading),
+                pressedScale = 0.98f,
+                onClick = onOpen,
+            )
             .clip(shape)
             .background(c.surfaceContainerLow)
             .padding(horizontal = 12.dp, vertical = 8.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Comments", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-            if (state.total > 0) {
+            if (live) {
+                Box(Modifier.size(7.dp).clip(CircleShape).background(c.error))
+                Spacer(Modifier.width(6.dp))
+            }
+            Text(if (live) "Live chat" else "Comments", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+            if (!live && state.total > 0) {
                 Spacer(Modifier.width(6.dp))
                 Text(formatCount(state.total.toLong()), color = c.onSurfaceVariant, fontWeight = FontWeight.Medium, fontSize = 12.sp)
             }
         }
         Spacer(Modifier.height(4.dp))
-        when {
-            state.disabled -> Text("Comments are turned off for this video.", color = c.onSurfaceVariant, fontSize = 12.sp)
-            first != null -> Row(verticalAlignment = Alignment.CenterVertically) {
-                ChannelAvatar(first.avatar, first.author, size = 22)
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = first.text,
-                    color = c.onSurfaceVariant,
-                    fontSize = 12.sp,
-                    lineHeight = 16.sp,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+        if (live) {
+            Text(
+                "Chat is live — tap to join the conversation.",
+                color = c.onSurfaceVariant,
+                fontSize = 12.sp,
+            )
+        } else {
+            when {
+                state.disabled -> Text("Comments are turned off for this video.", color = c.onSurfaceVariant, fontSize = 12.sp)
+                first != null -> Row(verticalAlignment = Alignment.CenterVertically) {
+                    ChannelAvatar(first.avatar, first.author, size = 22)
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        text = first.text,
+                        color = c.onSurfaceVariant,
+                        fontSize = 12.sp,
+                        lineHeight = 16.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                state.loading -> CircularProgressIndicator(color = c.primary, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                state.error != null -> Text(state.error.orEmpty(), color = c.onSurfaceVariant, fontSize = 12.sp)
+                else -> Text(if (Account.signedIn) "No comments yet. Add the first one." else "No comments yet.", color = c.onSurfaceVariant, fontSize = 12.sp)
             }
-            state.loading -> CircularProgressIndicator(color = c.primary, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
-            state.error != null -> Text(state.error.orEmpty(), color = c.onSurfaceVariant, fontSize = 12.sp)
-            else -> Text(if (Account.signedIn) "No comments yet. Add the first one." else "No comments yet.", color = c.onSurfaceVariant, fontSize = 12.sp)
         }
     }
 }

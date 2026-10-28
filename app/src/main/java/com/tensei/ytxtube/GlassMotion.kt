@@ -32,7 +32,6 @@ import androidx.compose.ui.util.fastCoerceIn
 import androidx.compose.ui.util.fastFirstOrNull
 import com.kyant.backdrop.RuntimeShader
 import com.kyant.backdrop.asComposeShader
-import com.kyant.backdrop.isRuntimeShaderSupported
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.first
@@ -162,7 +161,7 @@ class InteractiveHighlight(
     val offset: Offset get() = positionAnimation.value - startPosition
 
     private val shader =
-        if (isRuntimeShaderSupported()) {
+        if (GlassQuality.effectsSupported) {
             RuntimeShader(
                 """
 uniform float2 size;

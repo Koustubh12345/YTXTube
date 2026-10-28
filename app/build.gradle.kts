@@ -11,8 +11,19 @@ android {
         applicationId = "com.tensei.ytxtube"
         minSdk = 24
         targetSdk = 36
-        versionCode = 140
-        versionName = "1.4.0"
+        versionCode = 150
+        versionName = "1.5.0"
+    }
+
+    signingConfigs {
+        getByName("debug") {
+            // v1 matters on some Android 7/8 Samsung installers; v2 keeps modern
+            // devices happy. Signing with both makes the same APK installable on
+            // the widest range of devices.
+            enableV1Signing = true
+            enableV2Signing = true
+            enableV3Signing = true
+        }
     }
 
     buildTypes {
@@ -51,6 +62,12 @@ android {
     }
 
     packaging {
+        jniLibs {
+            // Extract native libraries on install. Uncompressed/embedded .so files
+            // are the usual cause of "problem parsing the package" on older Samsung
+            // Android 7/8 firmware.
+            useLegacyPackaging = true
+        }
         resources {
             excludes += listOf(
                 "META-INF/AL2.0",

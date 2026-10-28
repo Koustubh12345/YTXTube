@@ -397,8 +397,8 @@ fun UpdateOverlay(state: UpdateState, backdrop: Backdrop) {
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        update?.notes?.trim()?.ifBlank { "Bug fixes and performance improvements." }
-                            ?: "Bug fixes and performance improvements.",
+                        update?.notes?.trim()?.ifBlank { "Applied fixes and added requested new features." }
+                            ?: "Applied fixes and added requested new features.",
                         color = c.onSurface.copy(alpha = 0.92f),
                         fontSize = 13.5.sp,
                         lineHeight = 20.sp,

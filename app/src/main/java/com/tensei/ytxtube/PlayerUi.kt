@@ -101,6 +101,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
@@ -169,9 +170,23 @@ fun PlayerScreen(
     onOpen: (VideoItem) -> Unit,
     onCollapse: () -> Unit,
     onFullscreen: () -> Unit,
+    onSignIn: () -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
     val item = state.current ?: return
+    val isLiveStream = state.details?.item?.isLive == true || item.isLive
+    LaunchedEffect(state.sheet, item.id, isLiveStream) {
+        if (state.sheet == PlayerSheet.Comments && isLiveStream) {
+            val channelHint = state.details?.item?.channelUrl?.substringAfterLast('/')?.takeIf { it.startsWith("UC") }
+                ?: state.accountState?.channelId
+            state.liveChat.start(item.id, channelHint)
+        } else {
+            state.liveChat.stop()
+        }
+    }
+    DisposableEffect(Unit) {
+        onDispose { state.liveChat.stop() }
+    }
 
 
     val interactive = state.expanded || morph.dragging
@@ -198,16 +213,21 @@ fun PlayerScreen(
         }
     }
     val ambientColor by animateColorAsState(dominantColor, tween(600), label = "ambient")
-    val ambientMotion = androidx.compose.animation.core.rememberInfiniteTransition(label = "ambientDrift")
-    val ambientDrift by ambientMotion.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = androidx.compose.animation.core.infiniteRepeatable(
-            animation = tween(14_000, easing = androidx.compose.animation.core.LinearEasing),
-            repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
-        ),
-        label = "ambientDriftValue",
-    )
+    val ambientDrift = if (GlassQuality.effectsSupported) {
+        val ambientMotion = androidx.compose.animation.core.rememberInfiniteTransition(label = "ambientDrift")
+        val drift by ambientMotion.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = androidx.compose.animation.core.infiniteRepeatable(
+                animation = tween(14_000, easing = androidx.compose.animation.core.LinearEasing),
+                repeatMode = androidx.compose.animation.core.RepeatMode.Reverse,
+            ),
+            label = "ambientDriftValue",
+        )
+        drift
+    } else {
+        0.5f
+    }
 
     val isDark = isDarkTheme()
     val isAmoled = ThemeSettings.mode == "amoled"
@@ -241,7 +261,9 @@ fun PlayerScreen(
                 drawRect(lerpColor(miniColor, pageColor, ramp(p, 0f, 0.6f)))
             }
             .drawBehind {
-                if (state.isMusicMode || size.width < 10f || size.height < 10f) return@drawBehind
+                // AMOLED is meant to be pure black. The drifting status-bar/player glow
+                // is a normal-theme effect only; low-end devices skip it to keep playback smooth.
+                if (isAmoled || !GlassQuality.effectsSupported || state.isMusicMode || size.width < 10f || size.height < 10f) return@drawBehind
                 val topStrength = if (isAmoled) 0.40f else if (isDark) 0.35f else 0.22f
                 val bodyStrength = if (isAmoled) 0.30f else if (isDark) 0.26f else 0.16f
                 val aspect = state.stageAspect.coerceAtLeast(0.5f)
@@ -398,7 +420,11 @@ fun PlayerScreen(
                         }
                         PlayerActions(state)
                         QueueCard(state, onOpen = { state.sheet = PlayerSheet.Queue })
-                        CommentsCard(state.comments, onOpen = { state.sheet = PlayerSheet.Comments })
+                        CommentsCard(
+                            state.comments,
+                            onOpen = { state.sheet = PlayerSheet.Comments },
+                            live = isLiveStream,
+                        )
                     }
                 }
                 val related = details?.related.orEmpty()
@@ -426,16 +452,24 @@ fun PlayerScreen(
 
 
         if (state.sheet == PlayerSheet.Comments) {
-            val screenW = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
-            val videoBottom = top + top + (screenW - StageSideGap * 2) / state.stageAspect
-            val item = state.details?.item
-            CommentsPanel(
-                state.comments,
-                partialTop = videoBottom + 10.dp,
-                onClose = { state.sheet = null },
-                creatorAvatar = item?.avatar,
-                creatorName = item?.channel.orEmpty(),
-            )
+            val detailItem = state.details?.item
+            if (isLiveStream) {
+                LiveChatPanel(
+                    state.liveChat,
+                    onSignIn = onSignIn,
+                    onClose = { state.sheet = null },
+                )
+            } else {
+                val screenW = androidx.compose.ui.platform.LocalConfiguration.current.screenWidthDp.dp
+                val videoBottom = top + top + (screenW - StageSideGap * 2) / state.stageAspect
+                CommentsPanel(
+                    state.comments,
+                    partialTop = videoBottom + 10.dp,
+                    onClose = { state.sheet = null },
+                    creatorAvatar = detailItem?.avatar,
+                    creatorName = detailItem?.channel.orEmpty(),
+                )
+            }
         }
     }
 }
@@ -787,7 +821,7 @@ fun MiniPlayer(
                 spotColor = Color.Black.copy(alpha = if (isDark) 0.55f else 0.22f),
             )
             .then(
-                if (backdrop != null) {
+                if (backdrop != null && GlassQuality.effectsSupported) {
                     Modifier.drawBackdrop(
                         backdrop = backdrop,
                         shape = { shape },

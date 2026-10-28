@@ -124,6 +124,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        setHighestRefreshRate()
 
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -132,6 +133,45 @@ class MainActivity : ComponentActivity() {
         }
         setContent { YtxTubeTheme { YtxTubeApp() } }
     }
+
+    override fun onResume() {
+        super.onResume()
+        setHighestRefreshRate()
+    }
+
+    private fun setHighestRefreshRate() {
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                val disp = display ?: return
+                val currentMode = disp.mode
+                val modes = disp.supportedModes
+                val bestMode = modes
+                    .filter { it.physicalWidth == currentMode.physicalWidth && it.physicalHeight == currentMode.physicalHeight }
+                    .maxByOrNull { it.refreshRate }
+                    ?: modes.maxByOrNull { it.refreshRate }
+                if (bestMode != null && bestMode.refreshRate > currentMode.refreshRate) {
+                    val lp = window.attributes
+                    lp.preferredDisplayModeId = bestMode.modeId
+                    lp.preferredRefreshRate = bestMode.refreshRate
+                    window.attributes = lp
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                @Suppress("DEPRECATION")
+                val disp = windowManager.defaultDisplay ?: return
+                val currentMode = disp.mode
+                val modes = disp.supportedModes
+                val bestMode = modes
+                    .filter { it.physicalWidth == currentMode.physicalWidth && it.physicalHeight == currentMode.physicalHeight }
+                    .maxByOrNull { it.refreshRate }
+                    ?: modes.maxByOrNull { it.refreshRate }
+                if (bestMode != null && bestMode.refreshRate > currentMode.refreshRate) {
+                    val lp = window.attributes
+                    lp.preferredDisplayModeId = bestMode.modeId
+                    window.attributes = lp
+                }
+            }
+        }
+    }
 }
 
 enum class Tab(val label: String, val icon: ImageVector, val selectedIcon: ImageVector) {
@@ -139,7 +179,7 @@ enum class Tab(val label: String, val icon: ImageVector, val selectedIcon: Image
     Music("Music", Icons.Outlined.MusicNote, Icons.Rounded.MusicNote),
     Shorts("Shorts", Icons.Outlined.PlayCircle, Icons.Rounded.PlayCircle),
     Library("Library", Icons.Outlined.VideoLibrary, Icons.Rounded.VideoLibrary),
-    Downloads("Downloads", Icons.Outlined.Download, Icons.Rounded.Download),
+    Downloads("Saved", Icons.Outlined.Download, Icons.Rounded.Download),
 }
 
 
@@ -268,6 +308,11 @@ fun YtxTubeApp() {
 
     fun exitFullscreen() {
         player.portraitFullscreen = false
+        player.fullscreen = false
+        // Collapse to the mini player as well. Previously only the orientation was
+        // changed, so in landscape the fullscreen surface came straight back and
+        // Back/minimise felt broken.
+        player.expanded = false
         orientation.exitFullscreen()
     }
 
@@ -635,6 +680,7 @@ fun YtxTubeApp() {
                     onOpen = player::open,
                     onCollapse = { player.expanded = false },
                     onFullscreen = { toggleFullscreen() },
+                    onSignIn = { signingIn = true },
                 )
             }
         }

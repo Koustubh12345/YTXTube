@@ -20,6 +20,7 @@ class YTXTubeApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         appContext = applicationContext
         TvMode.init(this)
+        GlassQuality.init(this)
         NewPipe.init(NewPipeDownloader.instance)
 
 
@@ -29,7 +30,9 @@ class YTXTubeApplication : Application(), ImageLoaderFactory {
 
 
         YoutubeStreamExtractor.setFetchIosClient(true)
+        HdrItags.install()
         ThemeSettings.init(this)
+        HdrSupport.init(this)
         QualityPreference.init(this)
         PlaybackSpeed.init(this)
         AudioOnly.init(this)

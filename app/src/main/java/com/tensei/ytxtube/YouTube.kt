@@ -196,6 +196,21 @@ object YouTube {
             .mapNotNull { it.toVideoItem() }
     }
 
+    suspend fun searchPage(query: String, pageUrl: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        val handler = service.searchQHFactory.fromQuery(query, listOf(YoutubeSearchQueryHandlerFactory.VIDEOS), "")
+        if (pageUrl.isNullOrBlank()) {
+            val info = SearchInfo.getInfo(service, handler)
+            val items = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() }.filter { !it.isLive }
+            val next = if (info.hasNextPage()) info.nextPage?.url else null
+            FeedPage(items, next)
+        } else {
+            val more = SearchInfo.getMoreItems(service, handler, Page(pageUrl))
+            val items = more.items.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() }.filter { !it.isLive }
+            val next = more.nextPage?.url
+            FeedPage(items, next)
+        }
+    }
+
     suspend fun searchMusic(query: String): List<VideoItem> = withContext(Dispatchers.IO) {
         val q = query.trim()
         val musicQuery = if (q.contains("song", ignoreCase = true) || q.contains("music", ignoreCase = true) || q.contains("audio", ignoreCase = true) || q.contains("lyrics", ignoreCase = true)) {
@@ -494,7 +509,7 @@ private fun VideoStream.tier() = qualityTier(width, height)
 
 object StreamSelection {
 
-    private const val MAX_TIER = 1080
+    private const val MAX_TIER = 2160
 
     data class Picked(val video: VideoStream?, val audio: AudioStream?, val muxed: VideoStream?, val hlsUrl: String? = null) {
         val isPlayable get() = (video != null && audio != null) || muxed != null || !hlsUrl.isNullOrBlank()
@@ -517,9 +532,12 @@ object StreamSelection {
         val chosen = QualityPreference.height
 
         val ceiling = chosen ?: MAX_TIER
+        val hdr = HdrSupport.isSupported
         val video = (candidates.filter { it.tier() <= ceiling }.ifEmpty { candidates })
             .sortedWith(
                 compareBy<VideoStream> { if (it.tier() <= ceiling) ceiling - it.tier() else it.tier() }
+                    .thenBy { if (hdr && HdrSupport.isHdr(it)) 0 else 1 }
+                    .thenByDescending { it.bitrate }
                     .thenBy { formatRank(it.format) },
             )
             .firstOrNull()
@@ -597,10 +615,12 @@ object StreamSelection {
      */
     fun pickShorts(info: StreamInfo): Picked {
         // Shorts are vertical: always take the best rendition the extractor offers, up to 4K.
+        val hdr = HdrSupport.isSupported
         val video = info.videoOnlyStreams
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 && it.tier() <= 2160 }
             .sortedWith(
                 compareByDescending<VideoStream> { it.height }
+                    .thenBy { if (hdr && HdrSupport.isHdr(it)) 0 else 1 }
                     .thenBy { if (it.codec?.startsWith("avc") == true) 0 else 1 },
             )
             .firstOrNull()
@@ -647,9 +667,14 @@ object StreamSelection {
         val usable = info.videoOnlyStreams.filter {
             it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.tier() in 1..MAX_TIER && it.itagItem != null
         }
-        val family = usable.filter { it.codec?.startsWith("avc") == true }.ifEmpty { usable.filter { it.format == MediaFormat.WEBM } }
-        return family.groupBy { it.tier() }
-            .map { (_, sameTier) -> sameTier.maxBy { it.fps * 100_000L + it.bitrate } }
+        val hdr = HdrSupport.isSupported
+        return usable.groupBy { it.tier() }
+            .map { (_, sameTier) ->
+                sameTier.maxWith(
+                    compareBy<VideoStream> { if (hdr && HdrSupport.isHdr(it)) 2 else 0 }
+                        .thenBy { it.fps * 100_000L + it.bitrate },
+                )
+            }
             .sortedBy { it.tier() }
     }
 

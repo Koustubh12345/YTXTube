@@ -1031,7 +1031,7 @@ fun QualitySheet(state: PlayerState, onDismiss: () -> Unit) {
 
             Spacer(Modifier.height(6.dp))
 
-            val autoDesc = "Best up to 1080p" + ((state.decodedHeight?.let { "${it}p" } ?: details.quality)?.let { " · $it" } ?: "")
+            val autoDesc = "Best up to 2160p (4K)" + ((state.decodedHeight?.let { "${it}p" } ?: details.quality)?.let { " · $it" } ?: "")
             QualityRow("Auto", autoDesc, chosen == null) {
                 state.setQuality(null)
                 onDismiss()

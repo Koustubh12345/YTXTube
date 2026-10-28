@@ -60,7 +60,12 @@ class OrientationController(private val activity: Activity) {
         Settings.System.getInt(activity.contentResolver, Settings.System.ACCELEROMETER_ROTATION, 0) == 1
 
     fun enterFullscreen() { forced = Forced.Landscape }
-    fun exitFullscreen() { forced = Forced.Portrait }
+
+    /** Leave the player's forced orientation and follow the device again. */
+    fun exitFullscreen() {
+        forced = null
+        apply()
+    }
 
     fun setPlayerOpen(open: Boolean) {
         playerOpen = open
@@ -75,7 +80,9 @@ class OrientationController(private val activity: Activity) {
             return
         }
         activity.requestedOrientation = when {
-            !playerOpen -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
+            // Browsing must follow the device: tablets and foldables should be able
+            // to stay in landscape instead of being locked to portrait.
+            !playerOpen -> ActivityInfo.SCREEN_ORIENTATION_USER
             forced == Forced.Landscape -> ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
             forced == Forced.Portrait -> ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
             else -> ActivityInfo.SCREEN_ORIENTATION_USER

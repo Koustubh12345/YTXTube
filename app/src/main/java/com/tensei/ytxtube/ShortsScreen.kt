@@ -14,10 +14,13 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -42,6 +45,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Comment
+import androidx.compose.material.icons.rounded.Download
 import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.Pause
 import androidx.compose.material.icons.rounded.PlayArrow
@@ -71,18 +76,21 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
@@ -283,6 +291,22 @@ fun ShortsScreen(
     var likeBump by remember { mutableIntStateOf(0) }
     var dislikeBump by remember { mutableIntStateOf(0) }
     var subscribed by remember { mutableStateOf(false) }
+    val comments = remember { CommentsState(scope) }
+    var commentsOpen by remember { mutableStateOf(false) }
+    var downloadOpen by remember { mutableStateOf(false) }
+    var overlayWasPlaying by remember { mutableStateOf(false) }
+    var scrubbing by remember { mutableStateOf(false) }
+    var scrubPosition by remember { mutableLongStateOf(0L) }
+
+    fun pauseForOverlay() {
+        overlayWasPlaying = exo.isPlaying
+        if (overlayWasPlaying) exo.pause()
+    }
+
+    fun resumeAfterOverlayPanel() {
+        if (overlayWasPlaying && active) exo.play()
+        overlayWasPlaying = false
+    }
 
 
     DisposableEffect(exo) {
@@ -318,6 +342,9 @@ fun ShortsScreen(
         likeBump = 0
         dislikeBump = 0
         subscribed = false
+        commentsOpen = false
+        downloadOpen = false
+        scrubbing = false
 
         launch {
             val count = withContext(Dispatchers.IO) { fetchDislikeCount(currentId) }
@@ -604,7 +631,7 @@ fun ShortsScreen(
                                 .align(Alignment.BottomEnd)
                                 .padding(
                                     end = 8.dp,
-                                    bottom = bottomInset + 6.dp,
+                                    bottom = bottomInset + 22.dp,
                                 ),
                             item = item,
                             info = info,
@@ -643,6 +670,15 @@ fun ShortsScreen(
                                 }
                             },
                             onShare = { share(item) },
+                            onComments = {
+                                pauseForOverlay()
+                                comments.load(item.id)
+                                commentsOpen = true
+                            },
+                            onDownload = {
+                                pauseForOverlay()
+                                downloadOpen = true
+                            },
                             backdrop = backdrop,
                             glass = glass,
                         )
@@ -653,7 +689,7 @@ fun ShortsScreen(
                                 .padding(
                                     start = 16.dp,
                                     end = 82.dp,
-                                    bottom = bottomInset + 4.dp,
+                                    bottom = bottomInset + 20.dp,
                                 ),
                             item = item,
                             info = info,
@@ -690,25 +726,65 @@ fun ShortsScreen(
 
 
                         if (duration > 0) {
-                            Box(
+                            val shownPosition = if (scrubbing) scrubPosition else position
+                            val fraction = (shownPosition.toFloat() / duration).coerceIn(0f, 1f)
+                            Canvas(
                                 Modifier
                                     .align(Alignment.BottomStart)
                                     .fillMaxWidth()
-                                    .padding(bottom = bottomInset),
+                                    .padding(bottom = bottomInset + 2.dp)
+                                    .height(20.dp)
+                                    .pointerInput(duration) {
+                                        awaitEachGesture {
+                                            val down = awaitFirstDown(requireUnconsumed = false)
+                                            var target = (down.position.x / size.width * duration)
+                                                .toLong().coerceIn(0L, duration)
+                                            var moved = false
+                                            scrubbing = true
+                                            scrubPosition = target
+                                            try {
+                                                while (true) {
+                                                    val event = awaitPointerEvent()
+                                                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                                    if (!change.pressed) break
+                                                    if (kotlin.math.abs(change.position.x - down.position.x) > 4f) moved = true
+                                                    if (moved) {
+                                                        target = (change.position.x / size.width * duration)
+                                                            .toLong().coerceIn(0L, duration)
+                                                        scrubPosition = target
+                                                        exo.seekTo(target)
+                                                        change.consume()
+                                                    }
+                                                }
+                                                if (!moved) exo.seekTo(target)
+                                                position = target
+                                            } finally {
+                                                scrubbing = false
+                                            }
+                                        }
+                                    },
                             ) {
-                                Box(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .height(2.dp)
-                                        .background(Color.White.copy(alpha = 0.18f)),
-                                ) {
-                                    Box(
-                                        Modifier
-                                            .fillMaxWidth((position.toFloat() / duration).coerceIn(0f, 1f))
-                                            .height(2.dp)
-                                            .background(Color.White.copy(alpha = 0.9f)),
-                                    )
-                                }
+                                val y = size.height / 2f
+                                val stroke = 2.5.dp.toPx()
+                                drawLine(
+                                    Color.White.copy(alpha = 0.24f),
+                                    Offset(0f, y),
+                                    Offset(size.width, y),
+                                    strokeWidth = stroke,
+                                    cap = StrokeCap.Round,
+                                )
+                                drawLine(
+                                    Color.White.copy(alpha = 0.92f),
+                                    Offset(0f, y),
+                                    Offset(size.width * fraction, y),
+                                    strokeWidth = stroke,
+                                    cap = StrokeCap.Round,
+                                )
+                                drawCircle(
+                                    Color.White,
+                                    radius = if (scrubbing) 5.5.dp.toPx() else 4.dp.toPx(),
+                                    center = Offset(size.width * fraction, y),
+                                )
                             }
                         }
                     }
@@ -747,6 +823,33 @@ fun ShortsScreen(
             }
         }
 
+        if (commentsOpen) {
+            CommentsPanel(
+                state = comments,
+                partialTop = 0.dp,
+                onClose = {
+                    commentsOpen = false
+                    resumeAfterOverlayPanel()
+                },
+                creatorAvatar = info?.uploaderAvatars?.maxByOrNull { it.width }?.url,
+                creatorName = info?.uploaderName.orEmpty(),
+            )
+        }
+
+        if (downloadOpen) {
+            current?.let { short ->
+                DownloadQualitySheet(
+                    video = short,
+                    onDownloadStarted = { message ->
+                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                    },
+                    onDismiss = {
+                        downloadOpen = false
+                        resumeAfterOverlayPanel()
+                    },
+                )
+            }
+        }
     }
 }
 
@@ -835,13 +938,15 @@ private fun ShortsRail(
     onLike: () -> Unit,
     onDislike: () -> Unit,
     onShare: () -> Unit,
+    onComments: () -> Unit,
+    onDownload: () -> Unit,
     backdrop: Backdrop,
     glass: GlassSpec,
 ) {
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         ShortsAction(
             icon = Icons.Rounded.ThumbUp,
@@ -861,6 +966,8 @@ private fun ShortsRail(
             glass = glass,
             onClick = onDislike,
         )
+        ShortsAction(Icons.Rounded.Comment, "Comments", backdrop = backdrop, glass = glass, onClick = onComments)
+        ShortsAction(Icons.Rounded.Download, "Download", backdrop = backdrop, glass = glass, onClick = onDownload)
         ShortsAction(Icons.Rounded.Share, "Share", backdrop = backdrop, glass = glass, onClick = onShare)
     }
 }

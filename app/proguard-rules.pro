@@ -14,6 +14,7 @@
 
 -allowaccessmodification
 -repackageclasses
+-optimizationpasses 5
 
 
 

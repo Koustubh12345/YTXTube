@@ -188,6 +188,9 @@ class PlayerState(private val scope: CoroutineScope) {
 
     val comments = CommentsState(scope)
 
+    /** Polled only while a live stream's chat sheet is open. */
+    val liveChat = LiveChatState(scope)
+
 
 
     var accountState by mutableStateOf<VideoAccountState?>(null)
@@ -291,6 +294,7 @@ class PlayerState(private val scope: CoroutineScope) {
         loading = true
         sheet = null
         comments.clearFor(item.id)
+        liveChat.stop()
         accountState = null
         inWatchLater = false
         audioOptions = emptyList()
