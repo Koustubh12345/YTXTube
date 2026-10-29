@@ -86,11 +86,9 @@ data class UpdateInfo(
  * newer than the latest published release). Keep this in sync with the build.
  */
 internal val RELEASE_NOTES = """
-    • Added a Liquid Glass on/off switch in Settings. When it is off, every surface uses solid Material colours with no transparency or blur.
-    • New app icon with a cleaner, slightly smaller camera mark.
-    • Video quality now adapts to your internet speed in Auto mode: slower connections start lower, faster connections start higher.
-    • Fixed Shorts pausing after a second and refusing to resume when tapped.
-    • Fixed minor bugs and improved playback stability.
+    • Updated new app icon and refined visual assets.
+    • Fixed drag and drop interaction for the liquid glass bottom bar pill.
+    • Fixed minor bugs and issues with improved UI and stability.
 """.trimIndent()
 
 /**

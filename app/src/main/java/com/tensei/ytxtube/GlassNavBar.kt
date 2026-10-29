@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -300,7 +301,26 @@ fun LiquidBottomTabs(
                 .fillMaxWidth()
         )
 
-        // 2. Moving active tab indicator pill (rendered behind the tab icons & labels)
+        // 2. Base tabs row (unselected tabs clickable underneath)
+        CompositionLocalProvider(
+            LocalLiquidBottomTabScale provides {
+                lerp(1f, 1.15f, dampedDragAnimation.pressProgress)
+            }
+        ) {
+            Row(
+                Modifier
+                    .graphicsLayer {
+                        translationX = panelOffset
+                    }
+                    .height(64f.dp)
+                    .fillMaxWidth()
+                    .padding(4f.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                content = content
+            )
+        }
+
+        // 3. Moving active tab indicator pill on TOP with drag gestures + active tab content
         Box(
             Modifier
                 .padding(horizontal = 4f.dp)
@@ -363,26 +383,64 @@ fun LiquidBottomTabs(
                     }
                 )
                 .height(56f.dp)
-                .fillMaxWidth(1f / tabsCount)
-        )
-
-        // 3. Tab icons and labels rendered on top so they are always visible!
-        CompositionLocalProvider(
-            LocalLiquidBottomTabScale provides {
-                lerp(1f, 1.15f, dampedDragAnimation.pressProgress)
-            }
+                .fillMaxWidth(1f / tabsCount),
+            contentAlignment = Alignment.Center
         ) {
-            Row(
-                Modifier
+            val isLightTheme = !isSystemInDarkTheme() && ThemeSettings.mode != "dark" && ThemeSettings.mode != "amoled"
+            val contentColor = if (isLightTheme) Color.Black else Color.White
+            val activeIndex = dampedDragAnimation.value.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
+            val activeTab = Tab.entries.getOrNull(activeIndex) ?: Tab.Home
+            val isDownloading = activeTab == Tab.Downloads && Downloads.busy
+
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
                     .graphicsLayer {
-                        translationX = panelOffset
+                        val s = lerp(1f, 1.15f, dampedDragAnimation.pressProgress)
+                        scaleX = s
+                        scaleY = s
+                    },
+                verticalArrangement = Arrangement.spacedBy(2f.dp, Alignment.CenterVertically),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Box(
+                    contentAlignment = Alignment.Center,
+                    modifier = Modifier.size(28.dp)
+                ) {
+                    if (isDownloading) {
+                        CircularProgressIndicator(
+                            progress = { Downloads.progress },
+                            color = contentColor,
+                            strokeWidth = 1.5.dp,
+                            modifier = Modifier.size(26.dp)
+                        )
                     }
-                    .height(64f.dp)
-                    .fillMaxWidth()
-                    .padding(4f.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                content = content
-            )
+                    Icon(
+                        activeTab.selectedIcon,
+                        contentDescription = activeTab.label,
+                        tint = contentColor,
+                        modifier = Modifier.size(if (isDownloading) 18.dp else 22.dp)
+                    )
+                }
+                BasicText(
+                    text = activeTab.label,
+                    modifier = Modifier.fillMaxWidth(),
+                    style = TextStyle(
+                        color = contentColor,
+                        fontSize = 11.sp,
+                        letterSpacing = 0.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                    ),
+                    maxLines = 1,
+                    softWrap = false,
+                    autoSize = TextAutoSize.StepBased(
+                        minFontSize = 8.sp,
+                        maxFontSize = 11.sp,
+                        stepSize = 0.5.sp,
+                    ),
+                )
+            }
         }
     }
 }
