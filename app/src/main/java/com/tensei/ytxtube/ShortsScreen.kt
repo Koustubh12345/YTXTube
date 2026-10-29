@@ -101,6 +101,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
@@ -269,18 +270,20 @@ fun ShortsScreen(
     var resumeAfterOverlay by remember { mutableStateOf(false) }
     LaunchedEffect(active) {
         if (!active) {
-            resumeAfterOverlay = exo.isPlaying
+            resumeAfterOverlay = exo.playWhenReady
             exo.pause()
             preloader.pause()
         } else if (resumeAfterOverlay) {
             resumeAfterOverlay = false
-            exo.play()
+            exo.playWhenReady = true
         }
     }
 
     var info by remember { mutableStateOf<StreamInfo?>(null) }
     var playError by remember { mutableStateOf<String?>(null) }
     var playing by remember { mutableStateOf(true) }
+    var buffering by remember { mutableStateOf(false) }
+    var loading by remember { mutableStateOf(false) }
     var muted by remember { mutableStateOf(false) }
     var position by remember { mutableLongStateOf(0L) }
     var duration by remember { mutableLongStateOf(0L) }
@@ -298,22 +301,51 @@ fun ShortsScreen(
     var scrubbing by remember { mutableStateOf(false) }
     var scrubPosition by remember { mutableLongStateOf(0L) }
 
+    fun togglePlayback() {
+        // While the player is buffering, a tap should keep playback wanted
+        // instead of turning playWhenReady off and creating the old dead pause.
+        if (exo.playWhenReady && exo.playbackState == Player.STATE_READY) {
+            exo.pause()
+        } else {
+            exo.playWhenReady = true
+        }
+    }
+
     fun pauseForOverlay() {
-        overlayWasPlaying = exo.isPlaying
+        overlayWasPlaying = exo.playWhenReady
         if (overlayWasPlaying) exo.pause()
     }
 
     fun resumeAfterOverlayPanel() {
-        if (overlayWasPlaying && active) exo.play()
+        if (overlayWasPlaying && active) exo.playWhenReady = true
         overlayWasPlaying = false
     }
 
 
     DisposableEffect(exo) {
         val listener = object : Player.Listener {
-            override fun onIsPlayingChanged(isPlaying: Boolean) { playing = isPlaying }
+            // The pause/play overlay follows playWhenReady, not isPlaying. While
+            // ExoPlayer is buffering isPlaying is false even though playback is
+            // wanted, which used to show a dead pause button that could not resume.
+            override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+                playing = playWhenReady
+            }
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                if (isPlaying) playing = true
+            }
+
             override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_READY) playError = null
+                buffering = state == Player.STATE_BUFFERING
+                if (state == Player.STATE_READY) {
+                    loading = false
+                    playError = null
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                loading = false
+                playError = error.message ?: "Playback failed."
             }
         }
         exo.addListener(listener)
@@ -330,6 +362,7 @@ fun ShortsScreen(
     val currentId = current?.id
     LaunchedEffect(currentId) {
         if (currentId == null) return@LaunchedEffect
+        loading = true
         exo.pause()
         info = null
         playError = null
@@ -355,12 +388,14 @@ fun ShortsScreen(
         }
         info = loaded
         if (loaded == null) {
+            loading = false
             playError = "Couldn't load this Short."
             return@LaunchedEffect
         }
         likeCount = loaded.likeCount
         val source = shortsSource(context, loaded)
         if (source == null) {
+            loading = false
             playError = "This Short has no playable stream."
             return@LaunchedEffect
         }
@@ -376,7 +411,7 @@ fun ShortsScreen(
         }
     }
 
-    // Resolve the next three Shorts while this one plays, and quietly buffer the very next
+    // Resolve the next Shorts while this one plays, and quietly buffer the upcoming
     // stream into the shared MediaCache so the swipe lands on already-downloaded bytes.
     LaunchedEffect(feed.videos, page) {
         val upcoming = feed.videos.drop(page + 1).take(3)
@@ -412,7 +447,7 @@ fun ShortsScreen(
         context.startActivity(Intent.createChooser(intent, "Share Short"))
     }
 
-    val glassTint = glassFill(0.5f)
+    val glassTint = glassOverlayFill(0.5f)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (feed.videos.isEmpty()) {
@@ -483,11 +518,11 @@ fun ShortsScreen(
                                             true
                                         }
                                         Key.DirectionCenter, Key.Enter, Key.NumPadEnter -> {
-                                            if (exo.isPlaying) exo.pause() else exo.play()
+                                            togglePlayback()
                                             true
                                         }
                                         Key.MediaPlayPause -> {
-                                            if (exo.isPlaying) exo.pause() else exo.play()
+                                            togglePlayback()
                                             true
                                         }
                                         Key.DirectionRight -> {
@@ -559,17 +594,25 @@ fun ShortsScreen(
                                 indication = null,
                             ) {
                                 if (index == page) {
-                                    if (exo.isPlaying) exo.pause() else exo.play()
+                                    togglePlayback()
                                 }
                             },
                     )
 
-                    if (index == page && !playing && playError == null) {
+                    if (index == page && playError == null && (loading || (buffering && exo.playWhenReady))) {
+                        CircularProgressIndicator(
+                            color = Color.White,
+                            strokeWidth = 2.5.dp,
+                            modifier = Modifier.size(36.dp).align(Alignment.Center),
+                        )
+                    }
+
+                    if (index == page && !playing && !loading && playError == null) {
                         Box(
                             Modifier
                                 .size(56.dp)
                                 .align(Alignment.Center)
-                                .pressable(pressedScale = 0.9f) { exo.play() }
+                                .pressable(pressedScale = 0.9f) { exo.playWhenReady = true }
                                 .clip(CircleShape)
                                 .liquidGlass(backdrop, glass),
                             contentAlignment = Alignment.Center,
@@ -590,6 +633,8 @@ fun ShortsScreen(
                                 Spacer(Modifier.height(12.dp))
                                 PillButton("Retry", {
                                     info = null
+                                    loading = true
+                                    playError = null
                                     scope.launch {
                                         val retryId = item.id
                                         val loaded = withContext(Dispatchers.IO) {
@@ -602,6 +647,8 @@ fun ShortsScreen(
                                             exo.setMediaSource(source)
                                             exo.prepare()
                                             exo.play()
+                                        } else {
+                                            loading = false
                                         }
                                     }
                                 })
@@ -1151,8 +1198,13 @@ private fun ShortsVideo(player: ExoPlayer, modifier: Modifier = Modifier) {
 private fun buildShortsPlayer(context: Context): ExoPlayer {
     val loadControl = DefaultLoadControl.Builder()
         .setAllocator(DefaultAllocator(true, 64 * 1024))
-        .setBufferDurationsMs(1_500, 8_000, 250, 750)
-        .setBackBuffer(10_000, false)
+        .setBufferDurationsMs(
+            1_000,
+            10_000,
+            150,
+            400,
+        )
+        .setBackBuffer(5_000, false)
         .setPrioritizeTimeOverSizeThresholds(true)
         .build()
     return ExoPlayer.Builder(context)

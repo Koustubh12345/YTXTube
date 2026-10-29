@@ -21,6 +21,8 @@ class YTXTubeApplication : Application(), ImageLoaderFactory {
         appContext = applicationContext
         TvMode.init(this)
         GlassQuality.init(this)
+        GlassSettings.init(this)
+        NetworkSpeed.init(this)
         NewPipe.init(NewPipeDownloader.instance)
 
 

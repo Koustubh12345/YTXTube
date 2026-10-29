@@ -166,6 +166,34 @@ fun SettingsScreen(
 
                 HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
 
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Liquid Glass", fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                        Text(
+                            if (GlassSettings.enabled) {
+                                "Frosted, see-through surfaces with depth and blur"
+                            } else {
+                                "Using solid Material surfaces with no transparency"
+                            },
+                            color = c.onSurfaceVariant,
+                            fontSize = 12.sp
+                        )
+                    }
+                    Switch(
+                        checked = GlassSettings.enabled,
+                        onCheckedChange = { GlassSettings.updateEnabled(it) },
+                        colors = SwitchDefaults.colors(checkedTrackColor = c.primary)
+                    )
+                }
+
+                HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()

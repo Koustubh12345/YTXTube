@@ -545,7 +545,7 @@ private class YouTubeMediaSourceFactory(context: Context) : MediaSource.Factory 
         if (QualityPreference.height == null && picked.audio != null) {
             val adaptive = adaptiveVideo(info, mediaItem)
             if (adaptive != null) {
-                Log.i("YTXTube", "media source ${mediaItem.mediaId}: adaptive video ${StreamSelection.autoLadder(info).joinToString("/") { "${it.height}" }}p + audio itag ${picked.audio.itag}")
+                Log.i("YTXTube", "media source ${mediaItem.mediaId}: adaptive video up to ${NetworkSpeed.recommendedHeight()}p + audio itag ${picked.audio.itag}")
                 return MergingMediaSource(true, true, adaptive, source(picked.audio, info.duration, mediaItem))
             }
         }
@@ -619,7 +619,9 @@ private class YouTubeMediaSourceFactory(context: Context) : MediaSource.Factory 
 
     private fun adaptiveVideo(info: org.schabi.newpipe.extractor.stream.StreamInfo, mediaItem: MediaItem): MediaSource? {
         val durationSec = info.duration.takeIf { it > 0 } ?: return null
-        val manifests = StreamSelection.autoLadder(info).mapNotNull { stream ->
+        val maxTier = QualityPreference.height ?: NetworkSpeed.recommendedHeight()
+        val ladder = StreamSelection.autoLadder(info, maxTier)
+        val manifests = ladder.mapNotNull { stream ->
             runCatching {
                 val xml = YoutubeProgressiveDashManifestCreator.fromProgressiveStreamingUrl(stream.content, stream.itagItem!!, durationSec)
                 DashManifestParser().parse(Uri.parse(stream.content), ByteArrayInputStream(xml.toByteArray()))

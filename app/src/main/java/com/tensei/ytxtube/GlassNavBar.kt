@@ -29,6 +29,7 @@ import androidx.compose.foundation.text.BasicText
 import androidx.compose.foundation.text.TextAutoSize
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -153,12 +154,14 @@ fun LiquidBottomTabs(
     val accentColor =
         if (isLightTheme) Color(0xFF0088FF)
         else Color(0xFF0091FF)
+    val glassSupported = GlassQuality.effectsSupported
+    val solidContainer = if (isAmoled) Color.Black else MaterialTheme.colorScheme.surfaceContainer
     val containerColor = when {
+        !glassSupported -> solidContainer
         isAmoled -> Color(0xFF000000).copy(0.45f)
         isLightTheme -> Color(0xFFFAFAFA).copy(0.4f)
         else -> Color(0xFF121212).copy(0.4f)
     }
-    val glassSupported = GlassQuality.effectsSupported
 
     val tabsBackdrop = rememberLayerBackdrop()
 
@@ -257,7 +260,8 @@ fun LiquidBottomTabs(
             )
         }
 
-        Row(
+        // 1. Bottom navigation bar background capsule
+        Box(
             Modifier
                 .graphicsLayer {
                     translationX = panelOffset
@@ -284,60 +288,19 @@ fun LiquidBottomTabs(
                         Modifier
                             .clip(Capsule())
                             .background(containerColor)
-                            .border(1.dp, Color.White.copy(alpha = 0.14f), Capsule())
+                            .border(
+                                1.dp,
+                                MaterialTheme.colorScheme.outlineVariant,
+                                Capsule(),
+                            )
                     }
                 )
                 .then(interactiveHighlight.modifier)
                 .height(64f.dp)
                 .fillMaxWidth()
-                .padding(4f.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            content = content
         )
 
-        if (glassSupported) {
-            CompositionLocalProvider(
-                LocalLiquidBottomTabScale provides {
-                    lerp(1f, 1.2f, dampedDragAnimation.pressProgress)
-                }
-            ) {
-                Row(
-                    Modifier
-                        .clearAndSetSemantics {}
-                        .alpha(0f)
-                        .layerBackdrop(tabsBackdrop)
-                        .graphicsLayer {
-                            translationX = panelOffset
-                        }
-                        .drawBackdrop(
-                            backdrop = backdrop,
-                            shape = { Capsule() },
-                            effects = {
-                                val progress = dampedDragAnimation.pressProgress
-                                vibrancy()
-                                blur(8f.dp.toPx())
-                                lens(
-                                    24f.dp.toPx() * progress,
-                                    24f.dp.toPx() * progress
-                                )
-                            },
-                            highlight = {
-                                val progress = dampedDragAnimation.pressProgress
-                                Highlight.Default.copy(alpha = progress)
-                            },
-                            onDrawSurface = { drawRect(containerColor) }
-                        )
-                        .then(interactiveHighlight.modifier)
-                        .height(56f.dp)
-                        .fillMaxWidth()
-                        .padding(horizontal = 4f.dp)
-                        .graphicsLayer(colorFilter = ColorFilter.tint(accentColor)),
-                    verticalAlignment = Alignment.CenterVertically,
-                    content = content
-                )
-            }
-        }
-
+        // 2. Moving active tab indicator pill (rendered behind the tab icons & labels)
         Box(
             Modifier
                 .padding(horizontal = 4f.dp)
@@ -351,7 +314,7 @@ fun LiquidBottomTabs(
                 .then(
                     if (glassSupported) {
                         Modifier.drawBackdrop(
-                            backdrop = rememberCombinedBackdrop(backdrop, tabsBackdrop),
+                            backdrop = backdrop,
                             shape = { Capsule() },
                             effects = {
                                 val progress = dampedDragAnimation.pressProgress
@@ -386,8 +349,8 @@ fun LiquidBottomTabs(
                             onDrawSurface = {
                                 val progress = dampedDragAnimation.pressProgress
                                 drawRect(
-                                    if (isLightTheme) Color.Black.copy(0.1f)
-                                    else Color.White.copy(0.1f),
+                                    if (isLightTheme) Color.Black.copy(0.12f)
+                                    else Color.White.copy(0.12f),
                                     alpha = 1f - progress
                                 )
                                 drawRect(Color.Black.copy(alpha = 0.03f * progress))
@@ -396,15 +359,31 @@ fun LiquidBottomTabs(
                     } else {
                         Modifier
                             .clip(Capsule())
-                            .background(
-                                if (isLightTheme) Color.Black.copy(alpha = 0.10f)
-                                else Color.White.copy(alpha = 0.10f),
-                            )
+                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                     }
                 )
                 .height(56f.dp)
                 .fillMaxWidth(1f / tabsCount)
         )
+
+        // 3. Tab icons and labels rendered on top so they are always visible!
+        CompositionLocalProvider(
+            LocalLiquidBottomTabScale provides {
+                lerp(1f, 1.15f, dampedDragAnimation.pressProgress)
+            }
+        ) {
+            Row(
+                Modifier
+                    .graphicsLayer {
+                        translationX = panelOffset
+                    }
+                    .height(64f.dp)
+                    .fillMaxWidth()
+                    .padding(4f.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                content = content
+            )
+        }
     }
 }
 

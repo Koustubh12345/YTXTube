@@ -531,7 +531,9 @@ object StreamSelection {
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 }
         val chosen = QualityPreference.height
 
-        val ceiling = chosen ?: MAX_TIER
+        // Auto starts from the measured connection speed instead of always
+        // asking for the largest rendition. A manual choice still wins.
+        val ceiling = chosen ?: NetworkSpeed.recommendedHeight()
         val hdr = HdrSupport.isSupported
         val video = (candidates.filter { it.tier() <= ceiling }.ifEmpty { candidates })
             .sortedWith(
@@ -609,17 +611,22 @@ object StreamSelection {
     }
 
     /**
-     * Shorts always use the original audio, and prefer the highest adaptive video (up to 1080p)
-     * so the feed opens in high quality. A muxed stream is only the fallback when the video has
-     * no separable adaptive pair; it is usually capped at 360p/720p.
+     * Shorts use the original audio and the best rendition the current
+     * connection can sustain. A muxed stream is only the fallback when the
+     * video has no separable adaptive pair; it is usually capped at 360p/720p.
      */
     fun pickShorts(info: StreamInfo): Picked {
-        // Shorts are vertical: always take the best rendition the extractor offers, up to 4K.
+        // Shorts follow the same Auto rule as normal videos: start at a quality
+        // the current connection can sustain, not always 4K.
+        val ceiling = QualityPreference.height ?: NetworkSpeed.recommendedHeight()
         val hdr = HdrSupport.isSupported
-        val video = info.videoOnlyStreams
+        val candidates = info.videoOnlyStreams
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 && it.tier() <= 2160 }
+        val video = candidates
+            .filter { it.tier() <= ceiling }
+            .ifEmpty { candidates }
             .sortedWith(
-                compareByDescending<VideoStream> { it.height }
+                compareByDescending<VideoStream> { it.tier() }
                     .thenBy { if (hdr && HdrSupport.isHdr(it)) 0 else 1 }
                     .thenBy { if (it.codec?.startsWith("avc") == true) 0 else 1 },
             )
@@ -632,8 +639,10 @@ object StreamSelection {
 
         val muxed = info.videoStreams
             .filter { it.isUrl && it.height > 0 }
+            .filter { it.tier() <= ceiling }
+            .ifEmpty { info.videoStreams.filter { it.isUrl && it.height > 0 } }
             .sortedWith(
-                compareByDescending<VideoStream> { it.height }
+                compareByDescending<VideoStream> { it.tier() }
                     .thenBy { if (it.codec?.startsWith("avc") == true) 0 else 1 },
             )
             .firstOrNull()
@@ -663,9 +672,10 @@ object StreamSelection {
 
 
 
-    fun autoLadder(info: StreamInfo): List<VideoStream> {
+    fun autoLadder(info: StreamInfo, maxTier: Int = MAX_TIER): List<VideoStream> {
         val usable = info.videoOnlyStreams.filter {
-            it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.tier() in 1..MAX_TIER && it.itagItem != null
+            it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP &&
+                it.tier() in 1..maxTier && it.itagItem != null
         }
         val hdr = HdrSupport.isSupported
         return usable.groupBy { it.tier() }

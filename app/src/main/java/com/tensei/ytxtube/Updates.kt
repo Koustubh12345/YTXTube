@@ -82,6 +82,18 @@ data class UpdateInfo(
 )
 
 /**
+ * Shown when the GitHub release body is empty (or when testing an APK that is
+ * newer than the latest published release). Keep this in sync with the build.
+ */
+internal val RELEASE_NOTES = """
+    • Added a Liquid Glass on/off switch in Settings. When it is off, every surface uses solid Material colours with no transparency or blur.
+    • New app icon with a cleaner, slightly smaller camera mark.
+    • Video quality now adapts to your internet speed in Auto mode: slower connections start lower, faster connections start higher.
+    • Fixed Shorts pausing after a second and refusing to resume when tapped.
+    • Fixed minor bugs and improved playback stability.
+""".trimIndent()
+
+/**
  * Checks the GitHub releases feed, downloads the newest APK and hands it to the system installer.
  * No server, no account: the release page is the source of truth.
  */
@@ -397,8 +409,7 @@ fun UpdateOverlay(state: UpdateState, backdrop: Backdrop) {
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
-                        update?.notes?.trim()?.ifBlank { "Applied fixes and added requested new features." }
-                            ?: "Applied fixes and added requested new features.",
+                        update?.notes?.trim()?.ifBlank { RELEASE_NOTES } ?: RELEASE_NOTES,
                         color = c.onSurface.copy(alpha = 0.92f),
                         fontSize = 13.5.sp,
                         lineHeight = 20.sp,

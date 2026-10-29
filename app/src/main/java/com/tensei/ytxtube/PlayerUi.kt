@@ -798,12 +798,15 @@ fun MiniPlayer(
     val isAmoled = ThemeSettings.mode == "amoled"
     val shape = RoundedCornerShape(MiniRadius)
 
+    val glassOn = GlassQuality.effectsSupported
     val glassTint = when {
+        !glassOn -> if (isAmoled) Color.Black else c.surfaceContainerHigh
         isAmoled -> Color(0xFF000000).copy(alpha = 0.6f)
         isDark -> Color(0xFF16161A).copy(alpha = 0.65f)
         else -> Color(0xFFFFFFFF).copy(alpha = 0.72f)
     }
     val glassBorder = when {
+        !glassOn -> c.outlineVariant
         isAmoled -> Color(0xFF333333).copy(alpha = 0.7f)
         isDark -> Color(0xFFFFFFFF).copy(alpha = 0.14f)
         else -> Color(0xFF000000).copy(alpha = 0.08f)
@@ -1448,7 +1451,10 @@ private fun MusicLyricsPanel(
                 translationY = (1f - entrance) * 22.dp.toPx()
             }
             .clip(RoundedCornerShape(24.dp))
-            .background(c.surfaceContainerHigh.copy(alpha = 0.8f))
+            .background(
+                if (GlassQuality.effectsSupported) c.surfaceContainerHigh.copy(alpha = 0.8f)
+                else c.surfaceContainerHigh,
+            )
             .padding(start = 16.dp, end = 10.dp, top = 14.dp, bottom = 8.dp),
     ) {
         Column(Modifier.fillMaxSize()) {

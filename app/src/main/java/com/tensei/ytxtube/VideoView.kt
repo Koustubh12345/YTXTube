@@ -635,7 +635,7 @@ fun VideoContent(
                         videoBackdrop,
                         glassSpec(
                             shape = CircleShape,
-                            tint = glassFill(0.5f),
+                            tint = glassOverlayFill(0.5f),
                             blur = 20.dp,
                             refractionHeight = 12.dp,
                             refractionAmount = 20.dp,
@@ -1031,7 +1031,8 @@ fun QualitySheet(state: PlayerState, onDismiss: () -> Unit) {
 
             Spacer(Modifier.height(6.dp))
 
-            val autoDesc = "Best up to 2160p (4K)" + ((state.decodedHeight?.let { "${it}p" } ?: details.quality)?.let { " · $it" } ?: "")
+            val autoHeight = NetworkSpeed.recommendedHeight()
+            val autoDesc = "Adapts to your internet speed · up to ${autoHeight}p"
             QualityRow("Auto", autoDesc, chosen == null) {
                 state.setQuality(null)
                 onDismiss()
@@ -1324,7 +1325,7 @@ private fun GlassButton(
                         backdrop,
                         glassSpec(
                             shape = CircleShape,
-                            tint = glassFill(0.42f),
+                            tint = glassOverlayFill(0.42f),
                             blur = 16.dp,
                             refractionHeight = 9.dp,
                             refractionAmount = 15.dp,
