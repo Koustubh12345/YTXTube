@@ -92,6 +92,30 @@ object CaptionPreference {
 }
 
 /**
+ * Landscape playback gestures: swipe up/down on the left half for brightness and on the right
+ * half for volume. On by default because that is the YouTube behaviour, with a switch for
+ * people who only want the seek/tap gestures.
+ */
+object VideoGestureSettings {
+    private const val KEY_ENABLED = "video_gestures"
+
+    private var prefs: SharedPreferences? = null
+
+    var enabled by mutableStateOf(true)
+        private set
+
+    fun init(context: Context) {
+        prefs = context.getSharedPreferences("playback", Context.MODE_PRIVATE)
+        enabled = prefs?.getBoolean(KEY_ENABLED, true) ?: true
+    }
+
+    fun set(on: Boolean) {
+        enabled = on
+        prefs?.edit()?.putBoolean(KEY_ENABLED, on)?.apply()
+    }
+}
+
+/**
  * Shared Media3 cache. A Short replayed or a video re-opened plays from disk instead of
  * re-downloading, which is what makes loops and swipe-backs feel instant.
  */

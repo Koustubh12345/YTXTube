@@ -2,6 +2,19 @@ package com.tensei.ytxtube
 
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -22,10 +35,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.AccountCircle
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.CleaningServices
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Code
+import androidx.compose.material.icons.rounded.ExpandLess
+import androidx.compose.material.icons.rounded.ExpandMore
 import androidx.compose.material.icons.rounded.Info
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material.icons.rounded.Security
@@ -45,9 +63,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -56,6 +76,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onSignIn: () -> Unit,
     onSignedOut: () -> Unit,
+    onAccountSwitched: () -> Unit = {},
     contentPadding: PaddingValues = PaddingValues(0.dp),
     onCheckUpdate: () -> Unit = {},
 ) {
@@ -94,7 +115,8 @@ fun SettingsScreen(
                 onSignOut = {
                     Account.signOut()
                     onSignedOut()
-                }
+                },
+                onAccountSwitched = onAccountSwitched,
             )
             HorizontalDivider(
                 modifier = Modifier.padding(top = 12.dp),
@@ -138,58 +160,6 @@ fun SettingsScreen(
                             }
                         }
                     }
-                }
-
-                HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
-
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Use System Font", fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                        Text(
-                            "Use device default font throughout the app",
-                            color = c.onSurfaceVariant,
-                            fontSize = 12.sp
-                        )
-                    }
-                    Switch(
-                        checked = ThemeSettings.useSystemFont,
-                        onCheckedChange = { ThemeSettings.updateUseSystemFont(it) },
-                        colors = SwitchDefaults.colors(checkedTrackColor = c.primary)
-                    )
-                }
-
-                HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
-
-
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Liquid Glass", fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                        Text(
-                            if (GlassSettings.enabled) {
-                                "Frosted, see-through surfaces with depth and blur"
-                            } else {
-                                "Using solid Material surfaces with no transparency"
-                            },
-                            color = c.onSurfaceVariant,
-                            fontSize = 12.sp
-                        )
-                    }
-                    Switch(
-                        checked = GlassSettings.enabled,
-                        onCheckedChange = { GlassSettings.updateEnabled(it) },
-                        colors = SwitchDefaults.colors(checkedTrackColor = c.primary)
-                    )
                 }
 
                 HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
@@ -258,23 +228,44 @@ fun SettingsScreen(
                 }
             }
 
+            SettingsGroup(title = "General") {
+                SettingsSwitchRow(
+                    title = "Use System Font",
+                    subtitle = "Use device default font throughout the app",
+                    checked = ThemeSettings.useSystemFont,
+                    onCheckedChange = { ThemeSettings.updateUseSystemFont(it) },
+                )
+
+                HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
+
+                SettingsSwitchRow(
+                    title = "Liquid Glass",
+                    subtitle = if (GlassSettings.enabled) {
+                        "Frosted, see-through surfaces with depth and blur"
+                    } else {
+                        "Using solid Material surfaces with no transparency"
+                    },
+                    checked = GlassSettings.enabled,
+                    onCheckedChange = { GlassSettings.updateEnabled(it) },
+                )
+
+                HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
+
+                SettingsSwitchRow(
+                    title = "Video gestures",
+                    subtitle = "Swipe vertically on the left for brightness, right for volume",
+                    checked = VideoGestureSettings.enabled,
+                    onCheckedChange = { VideoGestureSettings.set(it) },
+                )
+            }
+
             SettingsGroup(title = "SponsorBlock") {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Automatically skip segments", fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                        Text("Choose what happens for each type", color = c.onSurfaceVariant, fontSize = 12.sp)
-                    }
-                    Switch(
-                        checked = SponsorBlock.enabled,
-                        onCheckedChange = SponsorBlock::updateEnabled,
-                        colors = SwitchDefaults.colors(checkedTrackColor = c.primary)
-                    )
-                }
+                SettingsSwitchRow(
+                    title = "Automatically skip segments",
+                    subtitle = "Choose what happens for each type",
+                    checked = SponsorBlock.enabled,
+                    onCheckedChange = SponsorBlock::updateEnabled,
+                )
 
                 if (SponsorBlock.enabled) {
                     HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
@@ -407,69 +398,274 @@ private fun SettingsProfileCard(
     profile: Profile?,
     onSignIn: () -> Unit,
     onSignOut: () -> Unit,
+    onAccountSwitched: () -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
-    val isLoggedIn = profile != null
+    val accounts = Account.accounts
+    val activeId = Account.activeAccountId
+    var expanded by remember { mutableStateOf(false) }
 
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (!isLoggedIn) Modifier.pressable(onClick = onSignIn) else Modifier)
-            .padding(vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (isLoggedIn && profile.avatar != null) {
-            ChannelAvatar(profile.avatar, profile.name, size = 44)
-        } else {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(c.surfaceContainerHigh),
-                contentAlignment = Alignment.Center
-            ) {
+    Column(Modifier.fillMaxWidth().padding(vertical = 12.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .pressable {
+                    if (profile == null) onSignIn() else expanded = !expanded
+                },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AnimatedContent(
+                targetState = profile,
+                modifier = Modifier.weight(1f),
+                transitionSpec = {
+                    (fadeIn(tween(240)) + slideInVertically(tween(300)) { it / 8 }) togetherWith
+                        (fadeOut(tween(160)) + slideOutVertically(tween(200)) { -it / 8 })
+                },
+                label = "accountHeader",
+            ) { current ->
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    if (current?.avatar != null) {
+                        ChannelAvatar(current.avatar, current.name, size = 44)
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .size(44.dp)
+                                .clip(CircleShape)
+                                .background(c.surfaceContainerHigh),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.AccountCircle,
+                                contentDescription = null,
+                                tint = c.onSurfaceVariant,
+                                modifier = Modifier.size(28.dp),
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.width(14.dp))
+
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            text = current?.name ?: "YouTube account",
+                            fontWeight = FontWeight.SemiBold,
+                            fontSize = 15.sp,
+                            color = c.onSurface,
+                        )
+                        Text(
+                            text = if (current != null) {
+                                current.handle ?: "${accounts.size} account${if (accounts.size == 1) "" else "s"}"
+                            } else {
+                                "Sign in to sync your account"
+                            },
+                            fontSize = 12.sp,
+                            color = c.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+
+            if (profile == null) {
+                Text(
+                    "Sign in",
+                    modifier = Modifier.pressable(onClick = onSignIn).padding(8.dp),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = c.primary,
+                )
+            } else {
                 Icon(
-                    imageVector = Icons.Rounded.AccountCircle,
-                    contentDescription = null,
+                    imageVector = if (expanded) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
+                    contentDescription = if (expanded) "Hide accounts" else "Switch account",
                     tint = c.onSurfaceVariant,
-                    modifier = Modifier.size(28.dp)
+                    modifier = Modifier.padding(6.dp).size(22.dp),
                 )
             }
         }
 
-        Spacer(Modifier.width(14.dp))
+        AnimatedVisibility(
+            visible = expanded && profile != null,
+            enter = fadeIn(tween(180)) + expandVertically(tween(260)),
+            exit = fadeOut(tween(140)) + shrinkVertically(tween(200)),
+        ) {
+            Column(Modifier.fillMaxWidth().padding(top = 4.dp)) {
+                accounts.forEach { account ->
+                    SettingsAccountRow(
+                        account = account,
+                        active = account.id == activeId,
+                        onSwitch = {
+                            if (Account.switchTo(account.id)) {
+                                expanded = false
+                                onAccountSwitched()
+                            }
+                        },
+                        onRemove = if (account.id == activeId) null else {
+                            { Account.removeAccount(account.id) }
+                        },
+                    )
+                }
 
-        Column(Modifier.weight(1f)) {
-            Text(
-                text = if (isLoggedIn) profile.name else "YouTube account",
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp,
-                color = c.onSurface
-            )
-            Text(
-                text = if (isLoggedIn) (profile.handle ?: "Signed in") else "Sign in to sync your account",
-                fontSize = 12.sp,
-                color = c.onSurfaceVariant
-            )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 4.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .pressable(onClick = onSignIn)
+                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        Modifier.size(34.dp).clip(CircleShape).background(c.surfaceContainerHigh),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(Icons.Rounded.Add, null, tint = c.primary, modifier = Modifier.size(19.dp))
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text("Add account", fontWeight = FontWeight.Medium, fontSize = 13.5.sp, color = c.primary)
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(16.dp))
+                        .pressable(onClick = onSignOut)
+                        .padding(horizontal = 10.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Box(
+                        Modifier.size(34.dp).clip(CircleShape).background(c.surfaceContainerHigh),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            Icons.AutoMirrored.Rounded.Logout,
+                            null,
+                            tint = c.error,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text("Sign out", fontWeight = FontWeight.Medium, fontSize = 13.5.sp, color = c.error)
+                }
+            }
         }
+    }
+}
 
-        if (isLoggedIn) {
-            Text(
-                "Sign out",
-                modifier = Modifier.pressable(onClick = onSignOut).padding(8.dp),
-                fontWeight = FontWeight.Medium,
-                fontSize = 12.sp,
-                color = c.onSurfaceVariant,
-            )
+@Composable
+private fun SettingsAccountRow(
+    account: AccountSummary,
+    active: Boolean,
+    onSwitch: () -> Unit,
+    onRemove: (() -> Unit)?,
+) {
+    val c = MaterialTheme.colorScheme
+    val background by animateColorAsState(
+        targetValue = if (active) c.primaryContainer.copy(alpha = 0.55f) else Color.Transparent,
+        animationSpec = tween(260),
+        label = "accountBackground",
+    )
+    val activeProgress by animateFloatAsState(
+        targetValue = if (active) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.62f, stiffness = 420f),
+        label = "accountActive",
+    )
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(background)
+            .pressable(onClick = onSwitch)
+            .padding(horizontal = 10.dp, vertical = 9.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (account.avatar != null) {
+            ChannelAvatar(account.avatar, account.name, size = 34)
         } else {
+            Box(
+                Modifier.size(34.dp).clip(CircleShape).background(c.surfaceContainerHigh),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.AccountCircle, null, tint = c.onSurfaceVariant, modifier = Modifier.size(22.dp))
+            }
+        }
+        Spacer(Modifier.width(10.dp))
+        Column(Modifier.weight(1f)) {
+            Text(account.name, fontWeight = FontWeight.Medium, fontSize = 13.5.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            account.handle?.let {
+                Text(it, fontSize = 11.5.sp, color = c.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (active) {
+            Box(
+                Modifier
+                    .size(22.dp)
+                    .graphicsLayer {
+                        scaleX = activeProgress
+                        scaleY = activeProgress
+                        alpha = activeProgress
+                    }
+                    .clip(CircleShape)
+                    .background(c.primary),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.Check, "Active account", tint = c.onPrimary, modifier = Modifier.size(14.dp))
+            }
+        } else if (onRemove != null) {
+            Box(
+                Modifier
+                    .size(28.dp)
+                    .clip(CircleShape)
+                    .pressable(onClick = onRemove),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(Icons.Rounded.Close, "Remove account", tint = c.onSurfaceVariant, modifier = Modifier.size(15.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun SettingsSwitchRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .pressable { onCheckedChange(!checked) }
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 16.dp),
+        ) {
             Text(
-                "Sign in",
-                modifier = Modifier.pressable(onClick = onSignIn).padding(8.dp),
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 13.sp,
-                color = c.primary,
+                text = title,
+                fontWeight = FontWeight.Medium,
+                fontSize = 14.5.sp,
+                color = c.onSurface,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                color = c.onSurfaceVariant,
+                fontSize = 12.sp,
+                lineHeight = 16.sp,
             )
         }
+        Spacer(Modifier.width(8.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(checkedTrackColor = c.primary),
+        )
     }
 }
 

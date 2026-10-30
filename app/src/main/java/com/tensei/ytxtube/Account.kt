@@ -107,35 +107,85 @@ class NotSignedInException : IOException("Not signed in")
 
 
 
+@Immutable
+data class AccountSummary(
+    val id: String,
+    val name: String,
+    val handle: String?,
+    val avatar: String?,
+)
+
 object Account {
     var profile by mutableStateOf<Profile?>(null)
         private set
     val signedIn get() = profile != null
 
+    /** Every saved session, in the order the user added them. */
+    var accounts by mutableStateOf<List<AccountSummary>>(emptyList())
+        private set
+
+    var activeAccountId by mutableStateOf<String?>(null)
+        private set
+
+    private data class StoredAccount(
+        val id: String,
+        val name: String,
+        val handle: String?,
+        val avatar: String?,
+        val cookies: String,
+        val clientVersion: String,
+        val visitor: String?,
+    )
+
     private var store: SecureStore? = null
+    private val entries = mutableListOf<StoredAccount>()
     private val cookies = linkedMapOf<String, String>()
     private var clientVersion = FALLBACK_CLIENT_VERSION
     private var visitorData: String? = null
 
     fun init(context: Context) {
-        val s = SecureStore(context, "account").also { store = it }
-        s.get(KEY_COOKIES)?.let { parseCookieHeader(it, cookies) }
-        s.get(KEY_CLIENT_VERSION)?.let { clientVersion = it }
-        visitorData = s.get(KEY_VISITOR)
-        val name = s.get(KEY_NAME)
-        if (name != null && (cookies.containsKey("SAPISID") || cookies.containsKey("__Secure-3PAPISID") || cookies.containsKey("SID"))) {
-            profile = Profile(name, s.get(KEY_HANDLE), s.get(KEY_AVATAR))
-        }
-    }
+        val s = SecureStore(context, "account")
+        store = s
+        entries.clear()
+        parseAccounts(s.get(KEY_ACCOUNTS)).let { entries.addAll(it) }
 
+        // Migrate the single-session format used before multi-account support.
+        if (entries.isEmpty()) {
+            val legacy = s.get(KEY_COOKIES)
+            val name = s.get(KEY_NAME)
+            if (legacy != null && name != null && looksSignedIn(legacy)) {
+                entries += StoredAccount(
+                    id = accountId(legacy),
+                    name = name,
+                    handle = s.get(KEY_HANDLE),
+                    avatar = s.get(KEY_AVATAR),
+                    cookies = legacy,
+                    clientVersion = s.get(KEY_CLIENT_VERSION) ?: FALLBACK_CLIENT_VERSION,
+                    visitor = s.get(KEY_VISITOR),
+                )
+            }
+        }
+
+        val wanted = s.get(KEY_ACTIVE) ?: entries.firstOrNull()?.id
+        val active = entries.firstOrNull { it.id == wanted } ?: entries.firstOrNull()
+        if (active != null) {
+            load(active)
+            activeAccountId = active.id
+            profile = Profile(active.name, active.handle, active.avatar)
+        } else {
+            activeAccountId = null
+            profile = null
+        }
+        publish()
+    }
 
     fun looksSignedIn(cookieHeader: String?): Boolean {
         val names = cookieHeader.orEmpty().split(';').map { it.substringBefore('=').trim() }.toSet()
         return "SAPISID" in names || "__Secure-3PAPISID" in names || "SID" in names
     }
 
-
     suspend fun completeSignIn(cookieHeader: String) = withContext(Dispatchers.IO) {
+        saveActive()
         synchronized(cookies) {
             cookies.clear()
             parseCookieHeader(cookieHeader, cookies)
@@ -156,19 +206,170 @@ object Account {
             }
         }
         val p = found ?: Profile("YouTube account", null, null)
-        store?.apply {
-            put(KEY_NAME, p.name); put(KEY_HANDLE, p.handle); put(KEY_AVATAR, p.avatar)
+        val id = accountId(cookieHeader)
+        withContext(Dispatchers.Main) {
+            val entry = StoredAccount(
+                id = id,
+                name = p.name,
+                handle = p.handle,
+                avatar = p.avatar,
+                cookies = cookieHeader(),
+                clientVersion = clientVersion,
+                visitor = visitorData,
+            )
+            val index = entries.indexOfFirst { it.id == id || sameSession(it.cookies, cookieHeader) }
+            if (index >= 0) entries[index] = entry else entries += entry
+            activeAccountId = id
+            profile = p
+            store?.apply {
+                put(KEY_NAME, p.name); put(KEY_HANDLE, p.handle); put(KEY_AVATAR, p.avatar)
+            }
+            persistAccounts()
+            publish()
         }
-        withContext(Dispatchers.Main) { profile = p }
+    }
+
+    /** Switches the active session. Returns false when the account was already active. */
+    fun switchTo(id: String): Boolean {
+        if (id == activeAccountId) return false
+        val target = entries.firstOrNull { it.id == id } ?: return false
+        saveActive()
+        load(target)
+        activeAccountId = id
+        profile = Profile(target.name, target.handle, target.avatar)
+        persistAccounts()
+        publish()
+        StreamCache.invalidateAll()
+        CaptionTracks.invalidateAll()
+        return true
     }
 
     fun signOut() {
+        saveActive()
+        val id = activeAccountId
+        entries.removeAll { it.id == id }
         synchronized(cookies) { cookies.clear() }
-        store?.clear()
-        profile = null
+        if (entries.isNotEmpty()) {
+            val next = entries.first()
+            load(next)
+            activeAccountId = next.id
+            profile = Profile(next.name, next.handle, next.avatar)
+        } else {
+            activeAccountId = null
+            profile = null
+            clientVersion = FALLBACK_CLIENT_VERSION
+            visitorData = null
+        }
+        store?.apply {
+            put(KEY_COOKIES, null); put(KEY_CLIENT_VERSION, null); put(KEY_VISITOR, null)
+            put(KEY_NAME, null); put(KEY_HANDLE, null); put(KEY_AVATAR, null)
+        }
+        persistAccounts()
+        publish()
+        StreamCache.invalidateAll()
+        CaptionTracks.invalidateAll()
         android.webkit.CookieManager.getInstance().apply { removeAllCookies(null); flush() }
     }
 
+    /** Removes a saved account without touching the active session. */
+    fun removeAccount(id: String) {
+        if (id == activeAccountId) {
+            signOut()
+            return
+        }
+        entries.removeAll { it.id == id }
+        persistAccounts()
+        publish()
+    }
+
+    private fun saveActive() {
+        val id = activeAccountId ?: return
+        val index = entries.indexOfFirst { it.id == id }
+        if (index < 0) return
+        val old = entries[index]
+        entries[index] = old.copy(
+            name = profile?.name ?: old.name,
+            handle = profile?.handle ?: old.handle,
+            avatar = profile?.avatar ?: old.avatar,
+            cookies = cookieHeader(),
+            clientVersion = clientVersion,
+            visitor = visitorData,
+        )
+    }
+
+    private fun load(entry: StoredAccount) {
+        synchronized(cookies) {
+            cookies.clear()
+            parseCookieHeader(entry.cookies, cookies)
+        }
+        clientVersion = entry.clientVersion.ifBlank { FALLBACK_CLIENT_VERSION }
+        visitorData = entry.visitor
+    }
+
+    private fun publish() {
+        accounts = entries.map { AccountSummary(it.id, it.name, it.handle, it.avatar) }
+    }
+
+    private fun parseAccounts(raw: String?): List<StoredAccount> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return runCatching {
+            val array = JSONArray(raw)
+            buildList {
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    val id = obj.optString("id").takeIf { it.isNotBlank() } ?: continue
+                    val cookieHeader = obj.optString("cookies").takeIf { it.isNotBlank() } ?: continue
+                    if (!looksSignedIn(cookieHeader)) continue
+                    add(
+                        StoredAccount(
+                            id = id,
+                            name = obj.optString("name").ifBlank { "YouTube account" },
+                            handle = obj.optString("handle").takeIf { it.isNotBlank() },
+                            avatar = obj.optString("avatar").takeIf { it.isNotBlank() },
+                            cookies = cookieHeader,
+                            clientVersion = obj.optString("clientVersion").ifBlank { FALLBACK_CLIENT_VERSION },
+                            visitor = obj.optString("visitor").takeIf { it.isNotBlank() },
+                        ),
+                    )
+                }
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    private fun persistAccounts() {
+        val array = JSONArray()
+        entries.forEach { entry ->
+            array.put(
+                JSONObject()
+                    .put("id", entry.id)
+                    .put("name", entry.name)
+                    .put("handle", entry.handle ?: "")
+                    .put("avatar", entry.avatar ?: "")
+                    .put("cookies", entry.cookies)
+                    .put("clientVersion", entry.clientVersion)
+                    .put("visitor", entry.visitor ?: ""),
+            )
+        }
+        store?.put(KEY_ACCOUNTS, array.toString())
+        store?.put(KEY_ACTIVE, activeAccountId)
+    }
+
+    private fun accountId(cookieHeader: String): String {
+        val identity = identityCookie(cookieHeader) ?: cookieHeader
+        val digest = MessageDigest.getInstance("SHA-1").digest(identity.toByteArray())
+        return "acct-" + digest.take(8).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun sameSession(a: String, b: String): Boolean {
+        val left = identityCookie(a) ?: return false
+        return left == identityCookie(b)
+    }
+
+    private fun identityCookie(header: String): String? {
+        val map = linkedMapOf<String, String>()
+        parseCookieHeader(header, map)
+        return map["SAPISID"] ?: map["__Secure-3PAPISID"] ?: map["SID"]
+    }
 
     private fun refreshClientConfig() {
         runCatching {
@@ -243,6 +444,8 @@ object Account {
     private const val KEY_NAME = "name"
     private const val KEY_HANDLE = "handle"
     private const val KEY_AVATAR = "avatar"
+    private const val KEY_ACCOUNTS = "accounts"
+    private const val KEY_ACTIVE = "active_account"
 }
 
 

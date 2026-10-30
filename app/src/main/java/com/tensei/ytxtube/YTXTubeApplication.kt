@@ -23,6 +23,7 @@ class YTXTubeApplication : Application(), ImageLoaderFactory {
         GlassQuality.init(this)
         GlassSettings.init(this)
         NetworkSpeed.init(this)
+        PlaybackBandwidth.init(this)
         NewPipe.init(NewPipeDownloader.instance)
 
 
@@ -40,6 +41,7 @@ class YTXTubeApplication : Application(), ImageLoaderFactory {
         AudioOnly.init(this)
         AudioTrackPreference.init(this)
         CaptionPreference.init(this)
+        VideoGestureSettings.init(this)
         ResumeStore.init(this)
         Account.init(this)
         SponsorBlock.init(this)

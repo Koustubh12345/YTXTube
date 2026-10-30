@@ -28,6 +28,13 @@ object PlayerFallback {
         "/youtubei/v1/player" in url ||
         "/watch" in url
 
+    /** The rescued player response, used for caption tracks when the extractor returns none. */
+    internal fun playerResponse(videoId: String): JSONObject? {
+        val cached = cache[videoId]
+        if (cached != null && System.currentTimeMillis() - cached.at < CACHE_MS) return cached.answer
+        return fetchFallback(videoId)
+    }
+
     
 
 

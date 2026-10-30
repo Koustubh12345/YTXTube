@@ -393,7 +393,7 @@ class PlayerState(private val scope: CoroutineScope) {
 
         replaceCurrent(player, item, positionMs = ResumeStore.startPosition(item.id))
         player.play()
-        applyCaptionSelection()
+        if (selectedSubtitleLanguage != null) setSubtitleLanguage(selectedSubtitleLanguage)
         refreshTracks()
     }
 
@@ -700,7 +700,7 @@ class PlayerState(private val scope: CoroutineScope) {
         if (cached != null) {
             syncAudioPreference(cached)
             audioOptions = StreamSelection.audioOptions(cached)
-            applyCaptionSelection()
+            if (selectedSubtitleLanguage != null) setSubtitleLanguage(selectedSubtitleLanguage)
             return
         }
         scope.launch {
@@ -710,7 +710,7 @@ class PlayerState(private val scope: CoroutineScope) {
             if (current?.id != id) return@launch
             syncAudioPreference(info)
             audioOptions = StreamSelection.audioOptions(info)
-            applyCaptionSelection()
+            if (selectedSubtitleLanguage != null) setSubtitleLanguage(selectedSubtitleLanguage)
         }
     }
 
@@ -736,43 +736,68 @@ class PlayerState(private val scope: CoroutineScope) {
         actionMessage = "Audio: ${option?.label ?: "Original"}"
     }
 
-    fun setCaptions(on: Boolean) {
-        CaptionPreference.set(on)
-        if (!on) captionText = null
-        applyCaptionSelection()
-        actionMessage = if (on) "Captions on" else "Captions off"
+    var selectedSubtitleLanguage by mutableStateOf<String?>(null)
+        private set
+
+    private var activeCues by mutableStateOf<List<ParsedCue>>(emptyList())
+    private var subtitleFetchJob: kotlinx.coroutines.Job? = null
+
+    fun setSubtitleLanguage(code: String?, trackUrl: String? = null) {
+        selectedSubtitleLanguage = code
+        subtitleFetchJob?.cancel()
+        val p = controller
+        try {
+            if (code == null) {
+                p?.trackSelectionParameters = p?.trackSelectionParameters
+                    ?.buildUpon()
+                    ?.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                    ?.build() ?: return
+                activeCues = emptyList()
+                captionText = null
+                actionMessage = "Captions off"
+                return
+            } else {
+                p?.trackSelectionParameters = p?.trackSelectionParameters
+                    ?.buildUpon()
+                    ?.setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                    ?.setPreferredTextLanguage(code)
+                    ?.build() ?: return
+                actionMessage = "Captions on"
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error setting subtitle language", e)
+        }
+
+        val videoId = current?.id ?: return
+        val url = trackUrl ?: run {
+            val info = StreamCache.get(videoId)
+            info?.subtitles?.firstOrNull { it.languageTag == code }?.content
+                ?: CaptionTracks.get(videoId)?.firstOrNull { it.languageTag == code }?.url
+        }
+
+        if (url != null) {
+            subtitleFetchJob = scope.launch(Dispatchers.IO) {
+                val cues = SubtitleParser.fetchAndParse(url)
+                withContext(Dispatchers.Main) {
+                    activeCues = cues
+                    val pos = controller?.currentPosition ?: 0L
+                    captionText = cues.firstOrNull { pos in it.startMs..it.endMs }?.text
+                }
+            }
+        }
     }
 
-    /**
-     * Media3 owns caption timing and parsing. The subtitle tracks are already merged into the
-     * media source, so turning captions on is only a track-selection change.
-     */
-    private var captionSignature: String? = null
-
-    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-    private fun applyCaptionSelection() {
-        val player = controller ?: return
-        val on = CaptionPreference.enabled
-        val groups = player.currentTracks.groups.filter { it.type == C.TRACK_TYPE_TEXT }
-        val wanted = CaptionPreference.languageTag
-        val group = groups.firstOrNull { g ->
-            (0 until g.length).any { g.getTrackFormat(it).language?.startsWith(wanted, ignoreCase = true) == true }
-        } ?: groups.firstOrNull()
-        val signature = "$on|$wanted|${groups.size}|${group?.let { groups.indexOf(it) }}"
-        if (signature == captionSignature) return
-        captionSignature = signature
-        runCatching {
-            var params = player.trackSelectionParameters.buildUpon()
-                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, !on)
-                .setPreferredTextLanguage(if (on) wanted else null)
-                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-            if (on && group != null) {
-                params = params.setOverrideForType(
-                    androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0),
-                )
-            }
-            player.trackSelectionParameters = params.build()
-        }.onFailure { Log.w(TAG, "caption track selection", it) }
+    fun setCaptions(on: Boolean) {
+        if (!on) {
+            setSubtitleLanguage(null)
+        } else {
+            val videoId = current?.id
+            val info = videoId?.let { StreamCache.get(it) }
+            val firstCode = info?.subtitles?.firstOrNull { it.isUrl && it.content.isNotBlank() }?.languageTag
+                ?: CaptionTracks.get(videoId.orEmpty())?.firstOrNull()?.languageTag
+                ?: "en"
+            setSubtitleLanguage(firstCode)
+        }
     }
 
 
@@ -963,6 +988,13 @@ class PlayerState(private val scope: CoroutineScope) {
         durationMs = player.duration.takeIf { it > 0 } ?: ((current?.durationSec ?: 0L) * 1000L)
         speed = player.playbackParameters.speed
         loopEnabled = player.repeatMode == Player.REPEAT_MODE_ONE
+
+        if (selectedSubtitleLanguage != null && activeCues.isNotEmpty()) {
+            val pos = positionMs
+            captionText = activeCues.firstOrNull { pos in it.startMs..it.endMs }?.text
+        } else if (selectedSubtitleLanguage == null) {
+            captionText = null
+        }
     }
 
     internal val listener = object : Player.Listener {
@@ -986,20 +1018,27 @@ class PlayerState(private val scope: CoroutineScope) {
 
         override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
             if (mediaItem != null) onPlayerMovedTo(mediaItem)
-            applyCaptionSelection()
+            val lang = selectedSubtitleLanguage
+            if (lang != null) {
+                setSubtitleLanguage(lang)
+            } else {
+                captionText = null
+                activeCues = emptyList()
+            }
         }
 
         override fun onCues(cueGroup: androidx.media3.common.text.CueGroup) {
             val text = cueGroup.cues
                 .mapNotNull { cue -> cue.text?.toString()?.takeIf { it.isNotBlank() } }
                 .joinToString("\n")
-            captionText = text.ifBlank { null }
+            if (text.isNotBlank()) {
+                captionText = text
+            }
         }
 
         override fun onVideoSizeChanged(videoSize: VideoSize) = takeVideoSize(videoSize)
 
         override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
-            applyCaptionSelection()
             val vs = controller?.videoSize ?: return
             if (vs.width <= 0 || vs.height <= 0) return
             val w = (vs.width * vs.pixelWidthHeightRatio).roundToInt()
@@ -1014,25 +1053,6 @@ class PlayerState(private val scope: CoroutineScope) {
         override fun onPlayerError(e: PlaybackException) {
             val status = (e.cause as? androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException)?.responseCode
             Log.w(TAG, "playback error ${e.errorCodeName}${status?.let { " (HTTP $it)" } ?: ""} for ${current?.id}", e)
-
-            // If captions are enabled and an error occurs (such as subtitle 403 or parse failure),
-            // disable the subtitle track so the video continues playing uninterrupted
-            if (CaptionPreference.enabled) {
-                CaptionPreference.set(false)
-                captionText = null
-                actionMessage = "Captions unavailable for this video"
-                runCatching {
-                    controller?.let { p ->
-                        p.trackSelectionParameters = p.trackSelectionParameters.buildUpon()
-                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
-                            .build()
-                        p.prepare()
-                        p.play()
-                    }
-                }
-                return
-            }
 
             if (e.errorCode == PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS && StreamRecovery.recovering == current?.id) return
             error = when (e.errorCode) {
@@ -1113,6 +1133,6 @@ fun rememberPlayerState(): PlayerState {
     return state
 }
 
-enum class PlayerSheet { Quality, Comments, Queue, Settings, Speed, Audio }
+enum class PlayerSheet { Quality, Comments, Queue, Settings, Speed, Audio, Subtitles }
 
 private const val TAG = "YTXTube"

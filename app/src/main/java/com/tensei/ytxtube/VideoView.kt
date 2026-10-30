@@ -332,8 +332,9 @@ fun VideoContent(
 
                             if (fullscreen) {
 
-                                val isLeftEdge = downX < 0.20f
-                                val isRightEdge = downX > 0.80f
+                                val gesturesOn = VideoGestureSettings.enabled
+                                val isLeftEdge = gesturesOn && downX < 0.20f
+                                val isRightEdge = gesturesOn && downX > 0.80f
 
                                 if (!isDraggingGesture && isVerticalIntent && kotlin.math.abs(totalDy) > 60f) {
                                     if (isLeftEdge || isRightEdge) {
@@ -1031,9 +1032,7 @@ fun QualitySheet(state: PlayerState, onDismiss: () -> Unit) {
 
             Spacer(Modifier.height(6.dp))
 
-            val autoHeight = NetworkSpeed.recommendedHeight()
-            val autoDesc = "Adapts to your internet speed · up to ${autoHeight}p"
-            QualityRow("Auto", autoDesc, chosen == null) {
+            QualityRow("Auto", "Adapts to your internet speed", chosen == null) {
                 state.setQuality(null)
                 onDismiss()
             }
@@ -1202,11 +1201,15 @@ fun PlayerSettingsSheet(state: PlayerState, backdrop: Backdrop, onDismiss: () ->
                     }
                 )
 
+                val captionsText = if (state.selectedSubtitleLanguage != null) "On" else "Off"
                 PlayerSettingItem(
                     icon = Icons.Rounded.Subtitles,
                     title = "Captions",
-                    value = if (CaptionPreference.enabled) "On" else "Off",
-                    onClick = { state.setCaptions(!CaptionPreference.enabled) }
+                    value = captionsText,
+                    onClick = {
+                        onDismiss()
+                        state.sheet = PlayerSheet.Subtitles
+                    }
                 )
 
 

@@ -86,9 +86,13 @@ data class UpdateInfo(
  * newer than the latest published release). Keep this in sync with the build.
  */
 internal val RELEASE_NOTES = """
-    • Updated new app icon and refined visual assets.
-    • Fixed drag and drop interaction for the liquid glass bottom bar pill.
-    • Fixed minor bugs and issues with improved UI and stability.
+    • Added Caption support: Choose from all available subtitle and caption languages in the player without playback interruption.
+    • Fixed bottom bar: Liquid Glass active pill now renders behind tab icons and labels, matches glass blur at rest, and clears on hold.
+    • Added multiple Google/YouTube account login: Easily add, switch between, or remove accounts with smooth switching animations.
+    • Added landscape video gestures switch: Easily turn on or off volume (right edge) and brightness (left edge) vertical swipes in Settings.
+    • Adaptive stream quality: Auto resolution adapts to your measured connection speed to prevent buffering on videos and Shorts.
+    • Reorganized Settings: Appearance & Theme followed by General with corrected switch text layouts.
+    • Replaced header mark with the official YTXTube app icon.
 """.trimIndent()
 
 /**

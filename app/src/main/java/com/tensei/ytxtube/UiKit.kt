@@ -1,5 +1,6 @@
 package com.tensei.ytxtube
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -65,6 +66,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import coil.compose.AsyncImage
 import kotlin.math.roundToInt
 import kotlin.math.PI
@@ -155,27 +157,11 @@ fun BackScreenHeader(
 
 @Composable
 fun BrandMark() {
-    Box(
-        modifier = Modifier
-            .size(width = 34.dp, height = 24.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(Brush.linearGradient(listOf(Color(0xFFFF0033), Color(0xFFD60029)))),
-        contentAlignment = Alignment.Center,
-    ) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.Center,
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(width = 2.dp, height = 8.5.dp)
-                    .clip(CircleShape)
-                    .background(Color.White),
-            )
-            Spacer(Modifier.width(2.5.dp))
-            Icon(Icons.Rounded.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
-        }
-    }
+    Image(
+        painter = painterResource(R.drawable.ic_brand),
+        contentDescription = null,
+        modifier = Modifier.size(26.dp),
+    )
 }
 
 @Composable

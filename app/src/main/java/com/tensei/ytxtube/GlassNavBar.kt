@@ -301,26 +301,8 @@ fun LiquidBottomTabs(
                 .fillMaxWidth()
         )
 
-        // 2. Base tabs row (unselected tabs clickable underneath)
-        CompositionLocalProvider(
-            LocalLiquidBottomTabScale provides {
-                lerp(1f, 1.15f, dampedDragAnimation.pressProgress)
-            }
-        ) {
-            Row(
-                Modifier
-                    .graphicsLayer {
-                        translationX = panelOffset
-                    }
-                    .height(64f.dp)
-                    .fillMaxWidth()
-                    .padding(4f.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                content = content
-            )
-        }
-
-        // 3. Moving active tab indicator pill on TOP with drag gestures + active tab content
+        // 2. Moving active tab indicator pill. It stays *behind* the tab row so
+        // the icons and labels are never distorted by the glass lens.
         Box(
             Modifier
                 .padding(horizontal = 4f.dp)
@@ -329,8 +311,6 @@ fun LiquidBottomTabs(
                         if (isLtr) dampedDragAnimation.value * tabWidth + panelOffset
                         else size.width - (dampedDragAnimation.value + 1f) * tabWidth + panelOffset
                 }
-                .then(interactiveHighlight.gestureModifier)
-                .then(dampedDragAnimation.modifier)
                 .then(
                     if (glassSupported) {
                         Modifier.drawBackdrop(
@@ -338,6 +318,11 @@ fun LiquidBottomTabs(
                             shape = { Capsule() },
                             effects = {
                                 val progress = dampedDragAnimation.pressProgress
+                                // Frosted at rest exactly like the bar itself; the blur
+                                // clears while the pill is held so the press lens and
+                                // highlight read as a separate interaction.
+                                vibrancy()
+                                if (progress < 0.999f) blur(8f.dp.toPx() * (1f - progress))
                                 lens(
                                     10f.dp.toPx() * progress,
                                     14f.dp.toPx() * progress,
@@ -383,64 +368,29 @@ fun LiquidBottomTabs(
                     }
                 )
                 .height(56f.dp)
-                .fillMaxWidth(1f / tabsCount),
-            contentAlignment = Alignment.Center
-        ) {
-            val isLightTheme = !isSystemInDarkTheme() && ThemeSettings.mode != "dark" && ThemeSettings.mode != "amoled"
-            val contentColor = if (isLightTheme) Color.Black else Color.White
-            val activeIndex = dampedDragAnimation.value.fastRoundToInt().fastCoerceIn(0, tabsCount - 1)
-            val activeTab = Tab.entries.getOrNull(activeIndex) ?: Tab.Home
-            val isDownloading = activeTab == Tab.Downloads && Downloads.busy
+                .fillMaxWidth(1f / tabsCount)
+        )
 
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        val s = lerp(1f, 1.15f, dampedDragAnimation.pressProgress)
-                        scaleX = s
-                        scaleY = s
-                    },
-                verticalArrangement = Arrangement.spacedBy(2f.dp, Alignment.CenterVertically),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    if (isDownloading) {
-                        CircularProgressIndicator(
-                            progress = { Downloads.progress },
-                            color = contentColor,
-                            strokeWidth = 1.5.dp,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
-                    Icon(
-                        activeTab.selectedIcon,
-                        contentDescription = activeTab.label,
-                        tint = contentColor,
-                        modifier = Modifier.size(if (isDownloading) 18.dp else 22.dp)
-                    )
-                }
-                BasicText(
-                    text = activeTab.label,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = TextStyle(
-                        color = contentColor,
-                        fontSize = 11.sp,
-                        letterSpacing = 0.sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center,
-                    ),
-                    maxLines = 1,
-                    softWrap = false,
-                    autoSize = TextAutoSize.StepBased(
-                        minFontSize = 8.sp,
-                        maxFontSize = 11.sp,
-                        stepSize = 0.5.sp,
-                    ),
-                )
+        // 3. Tab icons and labels on top. The drag gestures live on this row so
+        // the pill can stay behind the icons while drag-to-switch still works.
+        CompositionLocalProvider(
+            LocalLiquidBottomTabScale provides {
+                lerp(1f, 1.15f, dampedDragAnimation.pressProgress)
             }
+        ) {
+            Row(
+                Modifier
+                    .graphicsLayer {
+                        translationX = panelOffset
+                    }
+                    .then(interactiveHighlight.gestureModifier)
+                    .then(dampedDragAnimation.modifier)
+                    .height(64f.dp)
+                    .fillMaxWidth()
+                    .padding(4f.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                content = content
+            )
         }
     }
 }

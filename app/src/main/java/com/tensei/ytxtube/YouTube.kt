@@ -421,6 +421,8 @@ object StreamCache {
                 StreamInfo.getInfo(ServiceList.YouTube, YouTube.watchUrl(id)).also {
                     entries[id] = Entry(it, System.currentTimeMillis())
                     Net.noteMediaHost(StreamSelection.pick(it).let { p -> (p.video ?: p.muxed)?.content })
+                    CaptionTracks.put(id, CaptionTracks.fromStreamInfo(it))
+                    if (it.subtitles.isEmpty()) runCatching { CaptionTracks.load(id) }
                 }
             } catch (t: Throwable) {
                 if (t is org.schabi.newpipe.extractor.exceptions.SignInConfirmNotBotException) {
@@ -429,6 +431,8 @@ object StreamCache {
                     StreamInfo.getInfo(ServiceList.YouTube, YouTube.watchUrl(id)).also {
                         entries[id] = Entry(it, System.currentTimeMillis())
                         Net.noteMediaHost(StreamSelection.pick(it).let { p -> (p.video ?: p.muxed)?.content })
+                        CaptionTracks.put(id, CaptionTracks.fromStreamInfo(it))
+                        if (it.subtitles.isEmpty()) runCatching { CaptionTracks.load(id) }
                     }
                 } else throw t
             }
@@ -506,6 +510,24 @@ fun qualityTier(width: Int, height: Int): Int {
 
 private fun VideoStream.tier() = qualityTier(width, height)
 
+/** Whether this rendition's real (or typical) bitrate fits the sustainable budget. */
+private fun VideoStream.fitsKbps(budgetKbps: Int): Boolean {
+    val bits = bitrate
+    val needed = if (bits > 0) bits / 1000 else NetworkSpeed.typicalKbps(tier())
+    return needed <= budgetKbps
+}
+
+private fun videoOrder(hdr: Boolean, formatRank: (MediaFormat?) -> Int): Comparator<VideoStream> =
+    compareBy<VideoStream> { it.tier() }
+        .thenBy { if (hdr && HdrSupport.isHdr(it)) 1 else 0 }
+        .thenBy { it.bitrate }
+        .thenBy { -formatRank(it.format) }
+
+private fun lowestFirst(formatRank: (MediaFormat?) -> Int): Comparator<VideoStream> =
+    compareBy<VideoStream> { it.tier() }
+        .thenBy { it.bitrate }
+        .thenBy { formatRank(it.format) }
+
 
 object StreamSelection {
 
@@ -531,25 +553,38 @@ object StreamSelection {
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 }
         val chosen = QualityPreference.height
 
-        // Auto starts from the measured connection speed instead of always
-        // asking for the largest rendition. A manual choice still wins.
-        val ceiling = chosen ?: NetworkSpeed.recommendedHeight()
+        // Auto uses the measured throughput, not the link speed: a Wi-Fi link can report
+        // hundreds of megabits while the connection behind it cannot feed 4K. A manual
+        // choice still wins and is honoured as the closest rendition at or below it.
         val hdr = HdrSupport.isSupported
-        val video = (candidates.filter { it.tier() <= ceiling }.ifEmpty { candidates })
-            .sortedWith(
-                compareBy<VideoStream> { if (it.tier() <= ceiling) ceiling - it.tier() else it.tier() }
-                    .thenBy { if (hdr && HdrSupport.isHdr(it)) 0 else 1 }
-                    .thenByDescending { it.bitrate }
-                    .thenBy { formatRank(it.format) },
-            )
-            .firstOrNull()
+        val video = if (chosen != null) {
+            candidates
+                .filter { it.tier() <= chosen }
+                .maxWithOrNull(videoOrder(hdr, ::formatRank))
+                ?: candidates.minWithOrNull(lowestFirst(::formatRank))
+        } else {
+            val budget = NetworkSpeed.sustainableKbps()
+            candidates
+                .filter { it.fitsKbps(budget) }
+                .maxWithOrNull(videoOrder(hdr, ::formatRank))
+                ?: candidates.minWithOrNull(lowestFirst(::formatRank))
+        }
 
 
 
         val audio = selectAudio(info)
-        val muxed = info.videoStreams
+        val muxedCandidates = info.videoStreams
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
-            .maxByOrNull { it.height }
+        val muxed = if (chosen != null) {
+            muxedCandidates.filter { it.tier() <= chosen }
+                .maxWithOrNull(videoOrder(hdr, ::formatRank))
+                ?: muxedCandidates.minWithOrNull(lowestFirst(::formatRank))
+        } else {
+            val budget = NetworkSpeed.sustainableKbps()
+            muxedCandidates.filter { it.fitsKbps(budget) }
+                .maxWithOrNull(videoOrder(hdr, ::formatRank))
+                ?: muxedCandidates.minWithOrNull(lowestFirst(::formatRank))
+        }
         return Picked(video, audio, muxed, hls)
     }
 
@@ -611,41 +646,54 @@ object StreamSelection {
     }
 
     /**
-     * Shorts use the original audio and the best rendition the current
-     * connection can sustain. A muxed stream is only the fallback when the
-     * video has no separable adaptive pair; it is usually capped at 360p/720p.
+     * Shorts use the original audio and the best rendition the measured connection can
+     * sustain. A muxed stream is only the fallback when the video has no separable
+     * adaptive pair; it is usually capped at 360p/720p.
      */
     fun pickShorts(info: StreamInfo): Picked {
-        // Shorts follow the same Auto rule as normal videos: start at a quality
-        // the current connection can sustain, not always 4K.
-        val ceiling = QualityPreference.height ?: NetworkSpeed.recommendedHeight()
+        val chosen = QualityPreference.height
         val hdr = HdrSupport.isSupported
+        fun order(): Comparator<VideoStream> =
+            compareBy<VideoStream> { it.tier() }
+                .thenBy { if (hdr && HdrSupport.isHdr(it)) 1 else 0 }
+                .thenBy { if (it.codec?.startsWith("avc") == true) 1 else 0 }
+                .thenBy { it.bitrate }
+
+        fun lowest(): Comparator<VideoStream> =
+            compareBy<VideoStream> { it.tier() }
+                .thenBy { if (it.codec?.startsWith("avc") == true) 0 else 1 }
+                .thenBy { it.bitrate }
+
+        fun muxedOrder(): Comparator<VideoStream> =
+            compareBy<VideoStream> { it.tier() }
+                .thenBy { if (it.codec?.startsWith("avc") == true) 1 else 0 }
+                .thenBy { it.bitrate }
+
         val candidates = info.videoOnlyStreams
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 && it.tier() <= 2160 }
-        val video = candidates
-            .filter { it.tier() <= ceiling }
-            .ifEmpty { candidates }
-            .sortedWith(
-                compareByDescending<VideoStream> { it.tier() }
-                    .thenBy { if (hdr && HdrSupport.isHdr(it)) 0 else 1 }
-                    .thenBy { if (it.codec?.startsWith("avc") == true) 0 else 1 },
-            )
-            .firstOrNull()
+        val video = if (chosen != null) {
+            candidates.filter { it.tier() <= chosen }.maxWithOrNull(order())
+                ?: candidates.minWithOrNull(lowest())
+        } else {
+            val budget = NetworkSpeed.sustainableKbps()
+            candidates.filter { it.fitsKbps(budget) }.maxWithOrNull(order())
+                ?: candidates.minWithOrNull(lowest())
+        }
         val audio = audioTracks(info).firstOrNull { it.isOriginal }?.stream
             ?: info.audioStreams.filter { it.isUrl }
                 .sortedWith(compareBy<AudioStream> { if (it.format == MediaFormat.M4A) 0 else 1 }.thenByDescending { it.averageBitrate })
                 .firstOrNull()
         if (video != null && audio != null) return Picked(video, audio, null)
 
-        val muxed = info.videoStreams
-            .filter { it.isUrl && it.height > 0 }
-            .filter { it.tier() <= ceiling }
-            .ifEmpty { info.videoStreams.filter { it.isUrl && it.height > 0 } }
-            .sortedWith(
-                compareByDescending<VideoStream> { it.tier() }
-                    .thenBy { if (it.codec?.startsWith("avc") == true) 0 else 1 },
-            )
-            .firstOrNull()
+        val muxedCandidates = info.videoStreams.filter { it.isUrl && it.height > 0 }
+        val muxed = if (chosen != null) {
+            muxedCandidates.filter { it.tier() <= chosen }.maxWithOrNull(muxedOrder())
+                ?: muxedCandidates.minWithOrNull(lowest())
+        } else {
+            val budget = NetworkSpeed.sustainableKbps()
+            muxedCandidates.filter { it.fitsKbps(budget) }.maxWithOrNull(muxedOrder())
+                ?: muxedCandidates.minWithOrNull(lowest())
+        }
         return Picked(null, null, muxed)
     }
 

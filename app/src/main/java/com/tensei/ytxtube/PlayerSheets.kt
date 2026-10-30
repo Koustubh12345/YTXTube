@@ -231,7 +231,7 @@ fun AudioTrackSheet(state: PlayerState, backdrop: Backdrop, onDismiss: () -> Uni
                 Text("Captions", fontSize = 14.5.sp, fontWeight = FontWeight.Bold)
                 Text(
                     when {
-                        CaptionPreference.enabled -> "Showing captions"
+                        state.selectedSubtitleLanguage != null -> "Showing captions"
                         else -> "Turn on captions for this video"
                     },
                     color = c.onSurfaceVariant,
@@ -240,7 +240,7 @@ fun AudioTrackSheet(state: PlayerState, backdrop: Backdrop, onDismiss: () -> Uni
                 )
             }
             Switch(
-                checked = CaptionPreference.enabled,
+                checked = state.selectedSubtitleLanguage != null,
                 onCheckedChange = { state.setCaptions(it) },
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = c.onPrimary,

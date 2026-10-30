@@ -1209,6 +1209,7 @@ private fun buildShortsPlayer(context: Context): ExoPlayer {
         .build()
     return ExoPlayer.Builder(context)
         .setLoadControl(loadControl)
+        .setBandwidthMeter(PlaybackBandwidth.get())
         .build()
 }
 

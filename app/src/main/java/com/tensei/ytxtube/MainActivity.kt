@@ -630,6 +630,7 @@ fun YtxTubeApp() {
                 onBack = { openSettings = false },
                 onSignIn = { signingIn = true },
                 onSignedOut = { lib.reset(); lib.home.refresh(); player.refreshAccountState() },
+                onAccountSwitched = { lib.reset(); lib.home.refresh(); player.refreshAccountState() },
                 contentPadding = contentPadding,
                 onCheckUpdate = { updateState.check(manual = true) },
             )
@@ -783,6 +784,7 @@ fun YtxTubeApp() {
 
         when (player.sheet) {
             PlayerSheet.Quality -> QualitySheet(player, onDismiss = { player.sheet = null })
+            PlayerSheet.Subtitles -> SubtitlesSheet(player, onDismiss = { player.sheet = null })
             PlayerSheet.Settings -> Unit
             PlayerSheet.Comments -> Unit
             PlayerSheet.Queue -> QueueSheet(player, onDismiss = { player.sheet = null })
