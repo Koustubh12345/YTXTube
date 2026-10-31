@@ -122,6 +122,7 @@ import kotlinx.coroutines.launch
 class MainActivity : ComponentActivity() {
     private val notificationPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) {}
     internal var playerHolder: PlayerState? = null
+    internal var shortsPlayerHolder: androidx.media3.exoplayer.ExoPlayer? = null
     internal var pipController: PipController? = null
     internal var intentHandler: ((Intent) -> Unit)? = null
 
@@ -145,9 +146,15 @@ class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        val pip = pipController ?: return
+        if (!pip.supported) return
+        val sp = shortsPlayerHolder
+        if (sp != null && sp.isPlaying) {
+            pip.enter(9f / 16f)
+            return
+        }
         val p = playerHolder
-        val pip = pipController
-        if (pip?.supported == true && p != null && p.isPlaying && !p.isMusicMode) {
+        if (p != null && p.isPlaying && !p.isMusicMode) {
             pip.enter(p.videoAspect.takeIf { it > 0 } ?: (16f / 9f))
         }
     }
@@ -168,7 +175,7 @@ class MainActivity : ComponentActivity() {
                     .filter { it.physicalWidth == currentMode.physicalWidth && it.physicalHeight == currentMode.physicalHeight }
                     .maxByOrNull { it.refreshRate }
                     ?: modes.maxByOrNull { it.refreshRate }
-                if (bestMode != null && bestMode.refreshRate > currentMode.refreshRate) {
+                if (bestMode != null) {
                     val lp = window.attributes
                     lp.preferredDisplayModeId = bestMode.modeId
                     lp.preferredRefreshRate = bestMode.refreshRate
@@ -183,7 +190,7 @@ class MainActivity : ComponentActivity() {
                     .filter { it.physicalWidth == currentMode.physicalWidth && it.physicalHeight == currentMode.physicalHeight }
                     .maxByOrNull { it.refreshRate }
                     ?: modes.maxByOrNull { it.refreshRate }
-                if (bestMode != null && bestMode.refreshRate > currentMode.refreshRate) {
+                if (bestMode != null) {
                     val lp = window.attributes
                     lp.preferredDisplayModeId = bestMode.modeId
                     window.attributes = lp
@@ -231,6 +238,7 @@ fun YtxTubeApp() {
     var channelState by remember { mutableStateOf<ChannelState?>(null) }
     val playlistFeed = remember(openPlaylist?.id) { openPlaylist?.let { lib.playlistFeed(it.id) } }
     val updateState = remember { UpdateState(scope) }
+    val appFlipRotation = remember { androidx.compose.animation.core.Animatable(0f) }
     val appContext = LocalContext.current
 
     LaunchedEffect(Unit) {
@@ -321,8 +329,13 @@ fun YtxTubeApp() {
         mainActivity?.pipController = pip
     }
 
-    LaunchedEffect(player.isPlaying, player.isMusicMode, player.videoAspect) {
-        if (player.isPlaying && !player.isMusicMode) {
+    val isVideoPlaying = player.isPlaying && !player.isMusicMode
+    val isShortsPlaying = (tab == Tab.Shorts || shortsEntry != null) && mainActivity?.shortsPlayerHolder?.isPlaying == true
+
+    LaunchedEffect(isVideoPlaying, isShortsPlaying, player.videoAspect) {
+        if (isShortsPlaying) {
+            pip.updateAutoPip(true, 9f / 16f)
+        } else if (isVideoPlaying) {
             pip.updateAutoPip(true, player.videoAspect.takeIf { it > 0 } ?: (16f / 9f))
         } else {
             pip.updateAutoPip(false)
@@ -400,7 +413,12 @@ fun YtxTubeApp() {
     BackHandler(enabled = !player.expanded && openSettings) { openSettings = false }
     BackHandler(enabled = !player.expanded && openAllSubscriptions && openChannel == null) { openAllSubscriptions = false }
     BackHandler(enabled = !player.expanded && tab != Tab.Home && openPlaylist == null && openChannel == null && !openAllSubscriptions) {
-        tab = Tab.Home
+        if (tab == Tab.Shorts && isShortsPlaying && pip.supported) {
+            val entered = pip.enter(9f / 16f)
+            if (!entered) tab = Tab.Home
+        } else {
+            tab = Tab.Home
+        }
     }
     BackHandler(enabled = !player.expanded && openSearch) { openSearch = false }
     BackHandler(enabled = !player.expanded && openPlaylist != null) { openPlaylist = null }
@@ -408,17 +426,34 @@ fun YtxTubeApp() {
     BackHandler(enabled = !player.expanded && openChannel != null) { openChannel = null }
 
     BackHandler(enabled = showFullscreen) { exitFullscreen() }
-    BackHandler(enabled = shortsEntry != null) { shortsEntry = null }
+    BackHandler(enabled = shortsEntry != null) {
+        if (isShortsPlaying && pip.supported) {
+            val entered = pip.enter(9f / 16f)
+            if (!entered) shortsEntry = null
+        } else {
+            shortsEntry = null
+        }
+    }
     BackHandler(enabled = updateState.visible) { updateState.dismiss() }
 
     val canHandleRootBack = !player.expanded && !openSettings && !openAllSubscriptions &&
         tab == Tab.Home && openPlaylist == null && openChannel == null &&
         !openSearch && !signingIn && !showFullscreen && shortsEntry == null && !updateState.visible
-    BackHandler(enabled = canHandleRootBack && player.isPlaying) {
-        if (!player.isMusicMode && pip.supported) {
+    BackHandler(enabled = canHandleRootBack) {
+        if (isVideoPlaying && pip.supported) {
             val entered = pip.enter(player.videoAspect.takeIf { it > 0 } ?: (16f / 9f))
-            if (!entered) activity.moveTaskToBack(true)
+            if (!entered) {
+                pip.updateAutoPip(false)
+                activity.moveTaskToBack(true)
+            }
+        } else if (isShortsPlaying && pip.supported) {
+            val entered = pip.enter(9f / 16f)
+            if (!entered) {
+                pip.updateAutoPip(false)
+                activity.moveTaskToBack(true)
+            }
         } else {
+            pip.updateAutoPip(false)
             activity.moveTaskToBack(true)
         }
     }
@@ -487,7 +522,16 @@ fun YtxTubeApp() {
                 openChannel = url
             },
         ) {
-        Box(Modifier.fillMaxSize().layerBackdrop(pageBackdrop).background(c.surface)) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .layerBackdrop(pageBackdrop)
+                .background(c.surface)
+                .graphicsLayer {
+                    rotationY = appFlipRotation.value
+                    cameraDistance = 16f
+                }
+        ) {
         AnimatedContent(
             targetState = tab,
             modifier = Modifier
@@ -630,7 +674,16 @@ fun YtxTubeApp() {
                 onBack = { openSettings = false },
                 onSignIn = { signingIn = true },
                 onSignedOut = { lib.reset(); lib.home.refresh(); player.refreshAccountState() },
-                onAccountSwitched = { lib.reset(); lib.home.refresh(); player.refreshAccountState() },
+                onAccountSwitched = {
+                    scope.launch {
+                        appFlipRotation.animateTo(90f, tween(240, easing = androidx.compose.animation.core.FastOutLinearInEasing))
+                        lib.reset()
+                        lib.home.refresh()
+                        player.refreshAccountState()
+                        appFlipRotation.snapTo(-90f)
+                        appFlipRotation.animateTo(0f, tween(300, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
+                    }
+                },
                 contentPadding = contentPadding,
                 onCheckUpdate = { updateState.check(manual = true) },
             )
@@ -709,7 +762,7 @@ fun YtxTubeApp() {
         }
 
 
-        val showBottomBar = !openSettings && !openSearch && shortsEntry == null
+        val showBottomBar = !openSettings && !openSearch && shortsEntry == null && !pip.active
         AnimatedVisibility(
             visible = showBottomBar,
             enter = slideInVertically(tween(260, easing = Motion.Emphasized)) { it } + fadeIn(tween(160)),

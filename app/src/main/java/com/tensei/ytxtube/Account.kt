@@ -8,6 +8,7 @@ import androidx.compose.runtime.setValue
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.Request
@@ -113,6 +114,7 @@ data class AccountSummary(
     val name: String,
     val handle: String?,
     val avatar: String?,
+    val email: String? = null,
 )
 
 object Account {
@@ -135,6 +137,7 @@ object Account {
         val cookies: String,
         val clientVersion: String,
         val visitor: String?,
+        val email: String? = null,
     )
 
     private var store: SecureStore? = null
@@ -147,7 +150,27 @@ object Account {
         val s = SecureStore(context, "account")
         store = s
         entries.clear()
-        parseAccounts(s.get(KEY_ACCOUNTS)).let { entries.addAll(it) }
+        var accountsSanitized = false
+        parseAccounts(s.get(KEY_ACCOUNTS)).let { list ->
+            entries.addAll(list.map { entry ->
+                val nameClean = isCleanAccountName(entry.name)
+                val handleClean = isCleanAccountName(entry.handle)
+                if (!nameClean || !handleClean) {
+                    accountsSanitized = true
+                    val cleanHandle = entry.handle?.takeIf { isCleanAccountName(it) }
+                    val cleanName = when {
+                        nameClean -> entry.name
+                        !entry.email.isNullOrBlank() -> entry.email
+                        cleanHandle != null -> cleanHandle
+                        else -> "Google Account"
+                    }
+                    entry.copy(name = cleanName, handle = cleanHandle ?: entry.email)
+                } else entry
+            })
+        }
+        if (accountsSanitized) {
+            persistAccounts()
+        }
 
         // Migrate the single-session format used before multi-account support.
         if (entries.isEmpty()) {
@@ -177,6 +200,46 @@ object Account {
             profile = null
         }
         publish()
+
+        if (entries.isNotEmpty()) {
+            kotlinx.coroutines.CoroutineScope(Dispatchers.IO).launch {
+                val emailRegex = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""")
+                entries.forEachIndexed { i, e ->
+                    if (!isCleanAccountName(e.name) || e.email.isNullOrBlank()) {
+                        runCatching {
+                            val req = Request.Builder().url("https://www.youtube.com/?hl=en")
+                                .header("User-Agent", Net.USER_AGENT)
+                                .header("Cookie", e.cookies)
+                                .build()
+                            Net.client.newCall(req).execute().use { r ->
+                                val html = r.body?.string().orEmpty()
+                                val emailMatch = emailRegex.find(html)?.value
+                                val nameMatch = Regex(""""accountName":\{"simpleText":"([^"]+)"""").find(html)?.groupValues?.get(1)
+                                val handleMatch = Regex(""""channelHandle":\{"simpleText":"([^"]+)"""").find(html)?.groupValues?.get(1)
+                                val cleanName = nameMatch?.takeIf { isCleanAccountName(it) } ?: emailMatch ?: handleMatch?.takeIf { isCleanAccountName(it) }
+                                if (cleanName != null || emailMatch != null) {
+                                    withContext(Dispatchers.Main) {
+                                        val cur = entries.getOrNull(i)
+                                        if (cur != null && cur.id == e.id) {
+                                            entries[i] = cur.copy(
+                                                name = cleanName ?: cur.name,
+                                                handle = handleMatch?.takeIf { isCleanAccountName(it) } ?: cur.handle ?: emailMatch,
+                                                email = emailMatch ?: cur.email,
+                                            )
+                                            if (activeAccountId == cur.id) {
+                                                profile = Profile(entries[i].name, entries[i].handle, entries[i].avatar)
+                                            }
+                                            persistAccounts()
+                                            publish()
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     fun looksSignedIn(cookieHeader: String?): Boolean {
@@ -184,7 +247,7 @@ object Account {
         return "SAPISID" in names || "__Secure-3PAPISID" in names || "SID" in names
     }
 
-    suspend fun completeSignIn(cookieHeader: String) = withContext(Dispatchers.IO) {
+    suspend fun completeSignIn(cookieHeader: String, explicitEmail: String? = null) = withContext(Dispatchers.IO) {
         saveActive()
         synchronized(cookies) {
             cookies.clear()
@@ -192,20 +255,19 @@ object Account {
         }
         persistCookies()
         refreshClientConfig()
-        var found: Profile? = null
-        runCatching {
-            val menu = InnerTube.post("account/account_menu", JSONObject())
-            menu.walk { key, obj ->
-                if (key == "activeAccountHeaderRenderer" && found == null) {
-                    found = Profile(
-                        name = obj.text("accountName") ?: "YouTube account",
-                        handle = obj.text("channelHandle"),
-                        avatar = obj.optJSONObject("accountPhoto")?.thumbnails()?.lastOrNull(),
-                    )
-                }
-            }
+        val rawP = fetchProfileFromNetwork()
+        val emailRegex = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""")
+        val detectedEmail = explicitEmail
+            ?: emailRegex.find(rawP?.handle.orEmpty())?.value
+            ?: emailRegex.find(rawP?.name.orEmpty())?.value
+            ?: emailRegex.find(cookieHeader)?.value
+        val displayName = when {
+            rawP != null && isCleanAccountName(rawP.name) -> rawP.name
+            !detectedEmail.isNullOrBlank() -> detectedEmail
+            !rawP?.handle.isNullOrBlank() && isCleanAccountName(rawP.handle) -> rawP.handle
+            else -> "Google Account"
         }
-        val p = found ?: Profile("YouTube account", null, null)
+        val p = Profile(displayName, rawP?.handle ?: detectedEmail, rawP?.avatar)
         val id = accountId(cookieHeader)
         withContext(Dispatchers.Main) {
             val entry = StoredAccount(
@@ -216,6 +278,7 @@ object Account {
                 cookies = cookieHeader(),
                 clientVersion = clientVersion,
                 visitor = visitorData,
+                email = detectedEmail,
             )
             val index = entries.indexOfFirst { it.id == id || sameSession(it.cookies, cookieHeader) }
             if (index >= 0) entries[index] = entry else entries += entry
@@ -227,6 +290,132 @@ object Account {
             persistAccounts()
             publish()
         }
+    }
+
+            private val BLACKLISTED_ACCOUNT_NAMES = setOf(
+        "your data in youtube",
+        "your channel",
+        "youtube studio",
+        "switch account",
+        "sign out",
+        "purchases and memberships",
+        "settings",
+        "help",
+        "send feedback",
+        "feedback",
+        "appearance",
+        "location",
+        "language",
+        "restricted mode",
+        "keyboard shortcuts",
+        "time watched",
+        "youtube account",
+        "google account",
+        "dark theme",
+        "light theme",
+        "device theme",
+        "theme",
+        "dark",
+        "light"
+    )
+
+    fun isCleanAccountName(raw: String?): Boolean {
+        if (raw.isNullOrBlank()) return false
+        val s = raw.trim().lowercase()
+        if (s in BLACKLISTED_ACCOUNT_NAMES) return false
+        if (BLACKLISTED_ACCOUNT_NAMES.any { s.contains(it) }) return false
+        return true
+    }
+
+        private fun fetchProfileFromNetwork(): Profile? {
+        val emailRegex = Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""")
+        var found: Profile? = null
+
+        runCatching {
+            val menu = InnerTube.post("account/account_menu", JSONObject())
+            val menuStr = menu.toString()
+            val emailFromPayload = emailRegex.find(menuStr)?.value
+
+            var headerFound: Profile? = null
+            menu.walk { key, obj ->
+                if (headerFound == null && (key.contains("AccountHeader", ignoreCase = true) || obj.has("accountPhoto") || obj.has("email") || obj.has("channelHandle") || obj.has("accountName"))) {
+                    val rawName = obj.text("accountName")
+                        ?: obj.text("channelName")
+                        ?: obj.optString("accountName").ifBlank { null }
+                    val email = obj.text("email")
+                        ?: obj.optString("email").ifBlank { null }
+                        ?: emailFromPayload
+                    val handle = obj.text("channelHandle")
+                        ?: obj.optString("channelHandle").ifBlank { null }
+                    val avatar = obj.optJSONObject("accountPhoto")?.thumbnails()?.lastOrNull()
+                        ?: obj.optJSONObject("avatar")?.thumbnails()?.lastOrNull()
+                        ?: obj.thumbnails()?.lastOrNull()
+
+                    val cleanName = if (isCleanAccountName(rawName)) rawName else null
+                    val cleanHandle = if (isCleanAccountName(handle)) handle else null
+                    val displayName = cleanName ?: email ?: cleanHandle
+                    if (!displayName.isNullOrBlank()) {
+                        headerFound = Profile(name = displayName, handle = cleanHandle ?: email, avatar = avatar)
+                    }
+                }
+            }
+            if (headerFound != null) found = headerFound
+
+            if (found == null && !emailFromPayload.isNullOrBlank()) {
+                found = Profile(name = emailFromPayload, handle = emailFromPayload, avatar = null)
+            }
+        }
+        if (found != null) return found
+
+        runCatching {
+            val guide = InnerTube.post("guide", JSONObject())
+            val guideStr = guide.toString()
+            val emailFromGuide = emailRegex.find(guideStr)?.value
+
+            guide.walk { key, obj ->
+                if (found == null && (key.contains("AccountHeader", ignoreCase = true) || key.contains("accountPhoto") || obj.has("channelHandle") || obj.has("accountName"))) {
+                    val rawName = obj.text("accountName") ?: obj.text("title")
+                    val handle = obj.text("channelHandle") ?: obj.text("subtitle") ?: emailFromGuide
+                    val avatar = obj.optJSONObject("thumbnail")?.thumbnails()?.lastOrNull()
+                        ?: obj.thumbnails()?.lastOrNull()
+                    val cleanName = if (isCleanAccountName(rawName)) rawName else null
+                    val cleanHandle = if (isCleanAccountName(handle)) handle else null
+                    val displayName = cleanName ?: emailFromGuide ?: cleanHandle
+                    if (!displayName.isNullOrBlank()) {
+                        found = Profile(name = displayName, handle = cleanHandle ?: emailFromGuide, avatar = avatar)
+                    }
+                }
+            }
+            if (found == null && !emailFromGuide.isNullOrBlank()) {
+                found = Profile(name = emailFromGuide, handle = emailFromGuide, avatar = null)
+            }
+        }
+        if (found != null) return found
+
+        runCatching {
+            val req = Request.Builder().url("https://www.youtube.com/?hl=en")
+                .header("User-Agent", Net.USER_AGENT)
+                .header("Cookie", cookieHeader())
+                .build()
+            Net.client.newCall(req).execute().use { r ->
+                val html = r.body?.string().orEmpty()
+                val emailMatch = emailRegex.find(html)?.value
+                val nameMatch = Regex(""""accountName":\{"simpleText":"([^"]+)"""").find(html)
+                val handleMatch = Regex(""""channelHandle":\{"simpleText":"([^"]+)"""").find(html)
+                val avatarMatch = Regex(""""accountPhoto":\{"thumbnails":\[\{"url":"([^"]+)"""").find(html)
+                    ?: Regex(""""avatar":\{"thumbnails":\[\{"url":"([^"]+)"""").find(html)
+                val rawName = nameMatch?.groupValues?.get(1)
+                val handle = handleMatch?.groupValues?.get(1) ?: emailMatch
+                val avatar = avatarMatch?.groupValues?.get(1)?.replace("&amp;", "&")
+                val cleanName = if (isCleanAccountName(rawName)) rawName else null
+                val cleanHandle = if (isCleanAccountName(handle)) handle else null
+                val displayName = cleanName ?: emailMatch ?: cleanHandle
+                if (!displayName.isNullOrBlank()) {
+                    found = Profile(name = displayName, handle = cleanHandle ?: emailMatch, avatar = avatar)
+                }
+            }
+        }
+        return found
     }
 
     /** Switches the active session. Returns false when the account was already active. */
@@ -241,6 +430,20 @@ object Account {
         publish()
         StreamCache.invalidateAll()
         CaptionTracks.invalidateAll()
+        runCatching {
+            android.webkit.CookieManager.getInstance().apply {
+                removeAllCookies(null)
+                target.cookies.split(';').forEach { c ->
+                    val pair = c.trim()
+                    if (pair.isNotEmpty()) {
+                        setCookie("https://www.youtube.com", pair)
+                        setCookie("https://m.youtube.com", pair)
+                        setCookie("https://youtube.com", pair)
+                    }
+                }
+                flush()
+            }
+        }
         return true
     }
 
@@ -306,8 +509,11 @@ object Account {
         visitorData = entry.visitor
     }
 
-    private fun publish() {
-        accounts = entries.map { AccountSummary(it.id, it.name, it.handle, it.avatar) }
+        private fun publish() {
+        accounts = entries.map {
+            val cleanName = if (isCleanAccountName(it.name)) it.name else (it.email ?: it.handle ?: "Google Account")
+            AccountSummary(it.id, cleanName, it.handle ?: it.email, it.avatar, it.email)
+        }
     }
 
     private fun parseAccounts(raw: String?): List<StoredAccount> {
@@ -320,15 +526,22 @@ object Account {
                     val id = obj.optString("id").takeIf { it.isNotBlank() } ?: continue
                     val cookieHeader = obj.optString("cookies").takeIf { it.isNotBlank() } ?: continue
                     if (!looksSignedIn(cookieHeader)) continue
+                    val rawName = obj.optString("name")
+                    val rawHandle = obj.optString("handle").takeIf { it.isNotBlank() }
+                    val rawEmail = obj.optString("email").takeIf { it.isNotBlank() }
+                        ?: Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""").find(rawHandle.orEmpty())?.value
+                        ?: Regex("""[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}""").find(rawName)?.value
+                    val cleanName = if (isCleanAccountName(rawName)) rawName else (rawEmail ?: rawHandle?.takeIf { isCleanAccountName(it) } ?: "Google Account")
                     add(
                         StoredAccount(
                             id = id,
-                            name = obj.optString("name").ifBlank { "YouTube account" },
-                            handle = obj.optString("handle").takeIf { it.isNotBlank() },
+                            name = cleanName,
+                            handle = rawHandle?.takeIf { isCleanAccountName(it) } ?: rawEmail,
                             avatar = obj.optString("avatar").takeIf { it.isNotBlank() },
                             cookies = cookieHeader,
                             clientVersion = obj.optString("clientVersion").ifBlank { FALLBACK_CLIENT_VERSION },
                             visitor = obj.optString("visitor").takeIf { it.isNotBlank() },
+                            email = rawEmail,
                         ),
                     )
                 }
@@ -347,7 +560,8 @@ object Account {
                     .put("avatar", entry.avatar ?: "")
                     .put("cookies", entry.cookies)
                     .put("clientVersion", entry.clientVersion)
-                    .put("visitor", entry.visitor ?: ""),
+                    .put("visitor", entry.visitor ?: "")
+                    .put("email", entry.email ?: ""),
             )
         }
         store?.put(KEY_ACCOUNTS, array.toString())
@@ -761,95 +975,198 @@ object InnerTube {
 
 
 
-    suspend fun shorts(next: String? = null): FeedPage = withContext(Dispatchers.IO) {
-        if (Account.signedIn) {
-            if (next != null) {
+        private val SHORTS_TOPICS = listOf(
+        "#shorts",
+        "Trending shorts",
+        "Viral shorts",
+        "Funny shorts",
+        "Gaming shorts",
+        "Music shorts",
+        "Entertainment shorts",
+        "Tech shorts",
+        "Shorts",
+    )
 
-                val page = runCatching {
-                    parseShorts(post("browse", JSONObject().put("continuation", next)))
-                }.getOrNull()
-                return@withContext page ?: FeedPage(emptyList(), null)
+    private suspend fun loadInfiniteShortsFallback(next: String?, sessionSeen: Set<String>): FeedPage {
+        if (next == null) {
+            val trending = runCatching {
+                YouTube.trending().videos.filter { it.durationSec in 1..180 && it.id !in sessionSeen }
+            }.getOrNull()
+            if (!trending.isNullOrEmpty()) {
+                return FeedPage(trending, "anon_shorts:0:start")
             }
+            val search = runCatching {
+                YouTube.search(SHORTS_TOPICS[0]).filter { it.durationSec in 1..180 && it.id !in sessionSeen }
+            }.getOrDefault(emptyList())
+            return FeedPage(search, "anon_shorts:1:start")
+        }
 
-            val sources = listOf("FEshorts", "FEwhat_to_watch", "FEsubscriptions", "FEhistory")
-            val pages = sources
-                .map { browseId ->
+        val parts = next.removePrefix("anon_shorts:").split(":", limit = 2)
+        val idx = parts.getOrNull(0)?.toIntOrNull() ?: 0
+        for (i in 0..3) {
+            val topicIdx = (idx + i) % SHORTS_TOPICS.size
+            val query = SHORTS_TOPICS[topicIdx]
+            val items = runCatching {
+                YouTube.search(query).filter { it.durationSec in 1..180 && it.id !in sessionSeen }
+            }.getOrNull()
+            if (!items.isNullOrEmpty()) {
+                val nextToken = "anon_shorts:${(topicIdx + 1) % SHORTS_TOPICS.size}:start"
+                return FeedPage(items, nextToken)
+            }
+        }
+        val randomFallback = runCatching {
+            YouTube.search(SHORTS_TOPICS.random()).filter { it.durationSec in 1..180 }
+        }.getOrDefault(emptyList())
+        return FeedPage(randomFallback, "anon_shorts:${(idx + 1) % SHORTS_TOPICS.size}:start")
+    }
+
+    suspend fun shorts(next: String? = null, sessionSeen: Set<String> = emptySet()): FeedPage = withContext(Dispatchers.IO) {
+        val allSeen = SeenShorts.allSeen() + sessionSeen
+        val result = LinkedHashMap<String, VideoItem>()
+        var continuationToken: String? = null
+
+        if (Account.signedIn) {
+            val shelves = listOf("FEshorts", "FEwhat_to_watch", "FEsubscriptions", "FEhistory")
+            if (next != null) {
+                if (next.startsWith("shelf:")) {
+                    val parts = next.removePrefix("shelf:").split(":", limit = 2)
+                    var idx = parts.getOrNull(0)?.toIntOrNull() ?: 0
+                    var token = parts.getOrNull(1)
+
+                    var attempts = 0
+                    while (result.size < 15 && attempts < 8) {
+                        attempts++
+                        if (!token.isNullOrBlank() && token != "start") {
+                            val page = runCatching {
+                                parseShorts(post("browse", JSONObject().put("continuation", token)))
+                            }.getOrNull()
+                            if (page != null) {
+                                val fresh = page.videos.filter { it.id !in allSeen }
+                                fresh.forEach { result.putIfAbsent(it.id, it) }
+                                token = page.next
+                            } else {
+                                token = null
+                            }
+                        } else {
+                            idx = (idx + 1) % shelves.size
+                            val shelf = shelves[idx]
+                            val page = runCatching {
+                                parseShorts(post("browse", JSONObject().put("browseId", shelf)))
+                            }.getOrNull()
+                            if (page != null) {
+                                val fresh = page.videos.filter { it.id !in allSeen }
+                                fresh.forEach { result.putIfAbsent(it.id, it) }
+                                token = page.next
+                            }
+                        }
+                    }
+                    continuationToken = if (!token.isNullOrBlank()) "shelf:$idx:$token" else "shelf:${(idx + 1) % shelves.size}:start"
+                } else if (!next.startsWith("anon_shorts:")) {
+                    val page = runCatching {
+                        parseShorts(post("browse", JSONObject().put("continuation", next)))
+                    }.getOrNull()
+                    if (page != null) {
+                        val fresh = page.videos.filter { it.id !in allSeen }
+                        fresh.forEach { result.putIfAbsent(it.id, it) }
+                        continuationToken = page.next
+                    }
+                }
+            } else {
+                val pages = shelves.map { browseId ->
                     async(Dispatchers.IO) {
                         runCatching {
                             parseShorts(post("browse", JSONObject().put("browseId", browseId)))
                         }.getOrNull()
                     }
-                }
-                .awaitAll()
+                }.awaitAll().filterNotNull()
 
-            val merged = LinkedHashMap<String, VideoItem>()
-            var token: String? = null
-            pages.filterNotNull().forEach { page ->
-                page.videos.forEach { merged.putIfAbsent(it.id, it) }
-                if (token == null) token = page.next
+                pages.forEachIndexed { idx, p ->
+                    val fresh = p.videos.filter { it.id !in allSeen }
+                    fresh.forEach { result.putIfAbsent(it.id, it) }
+                    if (continuationToken == null && !p.next.isNullOrBlank()) {
+                        continuationToken = "shelf:$idx:${p.next}"
+                    }
+                }
+
+                var currentToken = continuationToken
+                var walkAttempts = 0
+                while (result.size < 15 && walkAttempts < 6) {
+                    walkAttempts++
+                    if (currentToken != null && currentToken.startsWith("shelf:")) {
+                        val parts = currentToken.removePrefix("shelf:").split(":", limit = 2)
+                        val sIdx = parts.getOrNull(0)?.toIntOrNull() ?: 0
+                        val sTok = parts.getOrNull(1)
+                        if (!sTok.isNullOrBlank() && sTok != "start") {
+                            val morePage = runCatching {
+                                parseShorts(post("browse", JSONObject().put("continuation", sTok)))
+                            }.getOrNull()
+                            if (morePage != null) {
+                                val fresh = morePage.videos.filter { it.id !in allSeen }
+                                fresh.forEach { result.putIfAbsent(it.id, it) }
+                                currentToken = if (!morePage.next.isNullOrBlank()) "shelf:$sIdx:${morePage.next}" else "shelf:${(sIdx + 1) % shelves.size}:start"
+                            } else {
+                                currentToken = "shelf:${(sIdx + 1) % shelves.size}:start"
+                            }
+                        } else {
+                            val shelf = shelves[(sIdx + 1) % shelves.size]
+                            val morePage = runCatching {
+                                parseShorts(post("browse", JSONObject().put("browseId", shelf)))
+                            }.getOrNull()
+                            if (morePage != null) {
+                                val fresh = morePage.videos.filter { it.id !in allSeen }
+                                fresh.forEach { result.putIfAbsent(it.id, it) }
+                                currentToken = if (!morePage.next.isNullOrBlank()) "shelf:${(sIdx + 1) % shelves.size}:${morePage.next}" else "shelf:${(sIdx + 2) % shelves.size}:start"
+                            }
+                        }
+                    } else break
+                }
+                continuationToken = currentToken
             }
 
-            if (merged.isNotEmpty()) return@withContext FeedPage(merged.values.toList(), token)
+            if (result.isNotEmpty()) {
+                return@withContext FeedPage(result.values.toList(), continuationToken ?: "shelf:0:start")
+            }
         }
 
-        val pool = runCatching { YouTube.search("#shorts") }.getOrDefault(emptyList())
-        val trending = runCatching { YouTube.trending().videos.filter { it.durationSec in 1..180 } }.getOrDefault(emptyList())
-        val mixed = (pool + trending).distinctBy { it.id }.shuffled()
-        FeedPage(mixed, null)
+        val fallback = loadInfiniteShortsFallback(next, allSeen)
+        fallback.videos.forEach { result.putIfAbsent(it.id, it) }
+        FeedPage(result.values.toList(), fallback.next)
     }
 
-    /**
-     * A genuinely new batch for the Shorts refresh button. YouTube's Shorts feed is personalised
-     * through FEshorts / FEwhat_to_watch; walking those continuations keeps every refreshed batch
-     * in the same lane as what the viewer actually watches. No random topic searches.
-     */
-    suspend fun newShorts(seen: Set<String>, token: String? = null): FeedPage = withContext(Dispatchers.IO) {
-        val out = LinkedHashMap<String, VideoItem>()
-        var next: String? = token
+    suspend fun newShorts(sessionSeen: Set<String>, token: String? = null): FeedPage = withContext(Dispatchers.IO) {
+        val allSeen = SeenShorts.allSeen() + sessionSeen
+        val result = LinkedHashMap<String, VideoItem>()
+        var continuationToken: String? = null
 
-        suspend fun walk(cursor: String?, maxPages: Int) {
-            var c = cursor
-            var pages = 0
-            while (c != null && pages < maxPages && out.size < 16) {
-                val page = runCatching {
-                    parseShorts(post("browse", JSONObject().put("continuation", c)))
-                }.getOrNull() ?: break
-                page.videos.filter { it.id !in seen }.forEach { out.putIfAbsent(it.id, it) }
-                if (page.next != null) next = page.next
-                c = page.next
-                pages++
-            }
-        }
-
-        // First keep walking the same personalised reel the viewer was already in.
-        walk(token, 3)
-
-        if (out.size < 10) {
-            // Top up from the same personalised shelves used by the initial feed.
-            for (browseId in listOf("FEshorts", "FEwhat_to_watch")) {
-                if (out.size >= 10) break
+        if (Account.signedIn) {
+            val shelves = listOf("FEshorts", "FEwhat_to_watch", "FEsubscriptions", "FEhistory").shuffled()
+            for (browseId in shelves) {
+                if (result.size >= 15) break
                 val page = runCatching {
                     parseShorts(post("browse", JSONObject().put("browseId", browseId)))
-                }.getOrNull() ?: continue
-                page.videos.filter { it.id !in seen }.forEach { out.putIfAbsent(it.id, it) }
-                if (next == null) next = page.next
-                if (out.size < 10) walk(page.next, 2)
+                }.getOrNull()
+                if (page != null) {
+                    val fresh = page.videos.filter { it.id !in allSeen }
+                    fresh.forEach { result.putIfAbsent(it.id, it) }
+                    if (continuationToken == null) continuationToken = page.next
+                }
             }
         }
-
-        if (out.size < 6) {
-            // Signed-out / exhausted feed fallback: popular Shorts, never a random topic.
-            runCatching {
-                YouTube.trending().videos.filter { it.durationSec in 1..180 && it.id !in seen }
-            }.getOrDefault(emptyList()).forEach { out.putIfAbsent(it.id, it) }
+        if (result.size < 15) {
+            val fallback = loadInfiniteShortsFallback(token, allSeen)
+            fallback.videos.forEach { result.putIfAbsent(it.id, it) }
+            if (continuationToken == null) continuationToken = fallback.next
         }
-
-        FeedPage(out.values.toList(), next)
+        FeedPage(result.values.toList(), continuationToken ?: "shelf:0:start")
     }
 
     internal fun parseShorts(root: JSONObject): FeedPage {
         val out = LinkedHashMap<String, VideoItem>()
-        var next: String? = null
+        var next: String? = root.optJSONObject("continuationEndpoint")
+            ?.optJSONObject("continuationCommand")?.optString("token")?.ifBlank { null }
+            ?: root.optJSONObject("continuationEndpoint")
+                ?.optJSONObject("reelWatchSequenceEndpoint")?.optString("sequenceParams")?.ifBlank { null }
+            ?: root.optString("continuation").takeIf { it.isNotBlank() }
         root.walk { key, obj ->
             when (key) {
                 "reelItemRenderer" -> {

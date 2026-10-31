@@ -133,15 +133,40 @@ object Downloads {
     private val lastPersist = ConcurrentHashMap<String, Long>()
     private val lastReport = ConcurrentHashMap<String, Long>()
 
+    private const val KEY_CUSTOM_DIR = "custom_download_dir"
+
+    val currentDownloadDir: File get() = if (::dir.isInitialized) dir else defaultDownloadDir()
+
+    fun defaultDownloadDir(): File {
+        val pubDownloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+        return File(pubDownloads, "YTXTube Downloads")
+    }
+
     fun init(context: Context) {
         if (initialized) return
-        val base = context.getExternalFilesDir(Environment.DIRECTORY_MOVIES) ?: context.filesDir
-        dir = File(base, "YTXTube").apply { mkdirs() }
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val customPath = prefs.getString(KEY_CUSTOM_DIR, null)
+        val targetDir = if (!customPath.isNullOrBlank()) {
+            File(customPath)
+        } else {
+            defaultDownloadDir()
+        }
+        dir = targetDir.apply { runCatching { mkdirs() } }
         initialized = true
         restore()
-
         persist()
+    }
+
+    fun setCustomDownloadDir(newDir: File) {
+        runCatching { newDir.mkdirs() }
+        dir = newDir
+        prefs.edit().putString(KEY_CUSTOM_DIR, newDir.absolutePath).apply()
+    }
+
+    fun resetToDefaultDownloadDir() {
+        val def = defaultDownloadDir().apply { runCatching { mkdirs() } }
+        dir = def
+        prefs.edit().remove(KEY_CUSTOM_DIR).apply()
     }
 
     fun fileFor(name: String): File = File(dir, name)

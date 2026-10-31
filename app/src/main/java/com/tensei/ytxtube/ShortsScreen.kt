@@ -100,6 +100,12 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.C
+import androidx.media3.exoplayer.dash.DashMediaSource
+import androidx.media3.exoplayer.dash.manifest.DashManifestParser
+import org.schabi.newpipe.extractor.services.youtube.dashmanifestcreators.YoutubeProgressiveDashManifestCreator
+import org.schabi.newpipe.extractor.stream.Stream
+import java.io.ByteArrayInputStream
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -138,23 +144,20 @@ private class ShortsFeedState(
     var error by mutableStateOf<String?>(null)
         private set
     private var next: String? = null
-    private var ended = false
     private var loaded = false
 
-    /** Every clip this session has shown, so a refresh can never repeat one. */
     private val seen = HashSet<String>()
 
-    fun load() {
+    fun load(ctx: Context? = null) {
         if (loading || loaded) return
         loading = true
         error = null
         scope.launch {
-            runCatching { InnerTube.shorts() }
+            runCatching { InnerTube.shorts(null, seen) }
                 .onSuccess { page ->
                     videos = merge(page.videos)
                     seen += videos.map { it.id }
                     next = page.next
-                    ended = page.next == null
                     loaded = true
                     if (videos.isEmpty()) error = "No Shorts found for this account."
                 }
@@ -163,8 +166,7 @@ private class ShortsFeedState(
         }
     }
 
-    /** Pull a brand new batch from the same personalised sources and start again from the top. */
-    fun refresh() {
+    fun refresh(ctx: Context? = null) {
         if (refreshing || loading) return
         refreshing = true
         error = null
@@ -173,16 +175,12 @@ private class ShortsFeedState(
             val page = runCatching { InnerTube.newShorts(seen, token) }.getOrNull()
             if (page != null && page.videos.isNotEmpty()) {
                 val fresh = page.videos.filter { it.id !in seen }
-                if (fresh.isNotEmpty()) {
-                    videos = fresh
-                    seen += fresh.map { it.id }
-                    next = page.next ?: token
-                    ended = next == null
-                    loaded = true
-                    error = null
-                } else {
-                    error = "No new Shorts right now — tap refresh again."
-                }
+                val list = if (fresh.isNotEmpty()) fresh else page.videos
+                videos = list
+                seen += list.map { it.id }
+                next = page.next ?: token
+                loaded = true
+                error = null
             } else {
                 error = "Couldn't load new Shorts. Check your connection."
             }
@@ -197,18 +195,20 @@ private class ShortsFeedState(
         return merged.values.toList()
     }
 
-    fun loadMore() {
-        val token = next ?: return
-        if (loading || ended) return
+    fun loadMore(ctx: Context? = null) {
+        if (loading) return
         loading = true
         scope.launch {
-            runCatching { InnerTube.shorts(token) }
+            val token = next
+            runCatching { InnerTube.shorts(token, seen) }
                 .onSuccess { page ->
                     val known = videos.mapTo(HashSet()) { it.id }
-                    videos = videos + page.videos.filter { known.add(it.id) }
-                    seen += page.videos.map { it.id }
-                    next = page.next
-                    ended = page.next == null
+                    val newItems = page.videos.filter { known.add(it.id) }
+                    if (newItems.isNotEmpty()) {
+                        videos = videos + newItems
+                        seen += newItems.map { it.id }
+                    }
+                    next = page.next ?: "anon_shorts:${(videos.size / 10) % 9}:start"
                 }
             loading = false
         }
@@ -243,14 +243,16 @@ fun ShortsScreen(
         }
     }
     val feed = remember(startItem?.id) { ShortsFeedState(scope, startItem) }
-    LaunchedEffect(feed) { feed.load() }
+    LaunchedEffect(feed) { feed.load(context) }
 
     val pager = rememberPagerState(pageCount = { feed.videos.size })
     val page = if (feed.videos.isEmpty()) 0 else pager.settledPage.coerceIn(0, feed.videos.lastIndex)
     val current = feed.videos.getOrNull(page)
 
-    LaunchedEffect(feed.videos.size) {
-        if (feed.videos.isNotEmpty() && page >= feed.videos.lastIndex - 2) feed.loadMore()
+    LaunchedEffect(page, feed.videos.size) {
+        if (feed.videos.isNotEmpty() && page >= feed.videos.lastIndex - 3) {
+            feed.loadMore(context)
+        }
     }
 
     val exo = remember {
@@ -267,13 +269,30 @@ fun ShortsScreen(
     }
     DisposableEffect(Unit) { onDispose { exo.release(); preloader.release() } }
 
+    val pip = LocalPictureInPicture.current
+    val inPip = pip?.active == true
+
+    DisposableEffect(exo) {
+        (context as? MainActivity)?.shortsPlayerHolder = exo
+        onDispose {
+            if ((context as? MainActivity)?.shortsPlayerHolder == exo) {
+                (context as? MainActivity)?.shortsPlayerHolder = null
+            }
+            pip?.updateAutoPip(false)
+        }
+    }
+
+    LaunchedEffect(exo.isPlaying) {
+        pip?.updateAutoPip(exo.isPlaying, 9f / 16f)
+    }
+
     var resumeAfterOverlay by remember { mutableStateOf(false) }
-    LaunchedEffect(active) {
-        if (!active) {
+    LaunchedEffect(active, inPip) {
+        if (!active && !inPip) {
             resumeAfterOverlay = exo.playWhenReady
             exo.pause()
             preloader.pause()
-        } else if (resumeAfterOverlay) {
+        } else if (resumeAfterOverlay && (active || inPip)) {
             resumeAfterOverlay = false
             exo.playWhenReady = true
         }
@@ -362,6 +381,7 @@ fun ShortsScreen(
     val currentId = current?.id
     LaunchedEffect(currentId) {
         if (currentId == null) return@LaunchedEffect
+        SeenShorts.markSeen(context, currentId)
         loading = true
         exo.pause()
         info = null
@@ -462,7 +482,7 @@ fun ShortsScreen(
                             fontSize = 14.sp,
                         )
                         Spacer(Modifier.height(16.dp))
-                        PillButton("Retry", { feed.load() })
+                        PillButton("Retry", { feed.load(context) })
                     }
                 }
             }
@@ -563,27 +583,29 @@ fun ShortsScreen(
                     }
 
 
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(220.dp)
-                            .align(Alignment.BottomCenter)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f)),
+                    if (!inPip) {
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(220.dp)
+                                .align(Alignment.BottomCenter)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color.Transparent, Color.Black.copy(alpha = 0.72f)),
+                                    ),
                                 ),
-                            ),
-                    )
-                    Box(
-                        Modifier
-                            .fillMaxWidth()
-                            .height(130.dp)
-                            .background(
-                                Brush.verticalGradient(
-                                    listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent),
+                        )
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(130.dp)
+                                .background(
+                                    Brush.verticalGradient(
+                                        listOf(Color.Black.copy(alpha = 0.55f), Color.Transparent),
+                                    ),
                                 ),
-                            ),
-                    )
+                        )
+                    }
                     }
 
                     Box(
@@ -656,21 +678,23 @@ fun ShortsScreen(
                         }
                     }
 
-                    ShortsTopBar(
-                        onBack = onBack,
-                        muted = muted,
-                        onToggleMute = { muted = !muted },
-                        onSearch = onSearch,
-                        refreshing = feed.refreshing,
-                        onRefresh = {
-                            feed.refresh()
-                            scope.launch { if (feed.videos.isNotEmpty()) pager.scrollToPage(0) }
-                        },
-                        backdrop = backdrop,
-                        glass = glass,
-                    )
+                    if (!inPip) {
+                        ShortsTopBar(
+                            onBack = onBack,
+                            muted = muted,
+                            onToggleMute = { muted = !muted },
+                            onSearch = onSearch,
+                            refreshing = feed.refreshing,
+                            onRefresh = {
+                                feed.refresh(context)
+                                scope.launch { if (feed.videos.isNotEmpty()) pager.scrollToPage(0) }
+                            },
+                            backdrop = backdrop,
+                            glass = glass,
+                        )
+                    }
 
-                    if (index == page) {
+                    if (index == page && !inPip) {
                         val currentLikeCount = if (likeCount >= 0) (likeCount + likeBump).coerceAtLeast(0L) else if (liked) 1L else -1L
                         val currentDislikes = if (dislikes >= 0) (dislikes + dislikeBump).coerceAtLeast(0L) else if (disliked) 1L else -1L
                         ShortsRail(
@@ -1199,41 +1223,50 @@ private fun buildShortsPlayer(context: Context): ExoPlayer {
     val loadControl = DefaultLoadControl.Builder()
         .setAllocator(DefaultAllocator(true, 64 * 1024))
         .setBufferDurationsMs(
-            1_000,
-            10_000,
+            500,
+            6_000,
             150,
-            400,
+            300,
         )
-        .setBackBuffer(5_000, false)
+        .setBackBuffer(2_000, true)
         .setPrioritizeTimeOverSizeThresholds(true)
+        .setTargetBufferBytes(4 * 1024 * 1024)
         .build()
     return ExoPlayer.Builder(context)
         .setLoadControl(loadControl)
         .setBandwidthMeter(PlaybackBandwidth.get())
-        .build()
+        .build().apply {
+            videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
+        }
+}
+
+@OptIn(UnstableApi::class)
+private fun createStreamSource(context: Context, stream: Stream): MediaSource {
+    val url = stream.content
+    val dsFactory = MediaCache.dataSourceFactory(context)
+    val mediaItem = MediaItem.fromUri(url)
+    return ProgressiveMediaSource.Factory(dsFactory).createMediaSource(mediaItem)
 }
 
 @OptIn(UnstableApi::class)
 private fun shortsSource(context: Context, info: StreamInfo): MediaSource? {
     val picked = StreamSelection.pickShorts(info)
-    val dsFactory = MediaCache.dataSourceFactory(context)
-    val progressive = ProgressiveMediaSource.Factory(dsFactory)
 
-    val muxedUrl = picked.muxed?.content
-    if (!muxedUrl.isNullOrBlank()) {
-        return progressive.createMediaSource(MediaItem.fromUri(muxedUrl))
+    val muxed = picked.muxed
+    if (muxed != null && !muxed.content.isNullOrBlank()) {
+        return createStreamSource(context, muxed)
     }
 
-    val videoUrl = picked.video?.content
-    val audioUrl = picked.audio?.content
-    if (!videoUrl.isNullOrBlank() && !audioUrl.isNullOrBlank()) {
-        val videoSource = progressive.createMediaSource(MediaItem.fromUri(videoUrl))
-        val audioSource = progressive.createMediaSource(MediaItem.fromUri(audioUrl))
+    val video = picked.video
+    val audio = picked.audio
+    if (video != null && audio != null && !video.content.isNullOrBlank() && !audio.content.isNullOrBlank()) {
+        val videoSource = createStreamSource(context, video)
+        val audioSource = createStreamSource(context, audio)
         return MergingMediaSource(videoSource, audioSource)
     }
 
-    val fallbackUrl = info.videoStreams.firstOrNull { it.isUrl }?.content
-        ?: info.videoOnlyStreams.firstOrNull { it.isUrl }?.content
-    return fallbackUrl?.let { progressive.createMediaSource(MediaItem.fromUri(it)) }
+    val fallback = info.videoStreams.firstOrNull { it.isUrl }
+        ?: info.videoOnlyStreams.firstOrNull { it.isUrl }
+    return fallback?.let { createStreamSource(context, it) }
 }
 

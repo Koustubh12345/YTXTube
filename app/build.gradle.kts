@@ -11,8 +11,8 @@ android {
         applicationId = "com.tensei.ytxtube"
         minSdk = 24
         targetSdk = 36
-        versionCode = 190
-        versionName = "1.9.0"
+        versionCode = 200
+        versionName = "2.0.0"
     }
 
     signingConfigs {

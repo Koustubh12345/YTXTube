@@ -1,4 +1,4 @@
-﻿package com.tensei.ytxtube
+package com.tensei.ytxtube
 
 import android.annotation.SuppressLint
 import android.webkit.CookieManager
@@ -54,7 +54,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import kotlinx.coroutines.launch
 
 private const val SIGN_IN_URL =
-    "https://accounts.google.com/ServiceLogin?service=youtube&uilel=3&passive=true&hl=en" +
+    "https://accounts.google.com/ServiceLogin?service=youtube&hl=en&prompt=select_account" +
         "&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Dm%26hl%3Den%26next%3D%252F"
 
 
@@ -119,17 +119,22 @@ fun SignInScreen(onDone: () -> Unit, onCancel: () -> Unit) {
                 modifier = Modifier.fillMaxSize(),
                 factory = { context ->
                     val cookies = CookieManager.getInstance()
-
                     cookies.removeAllCookies(null)
-                    cookies.setAcceptCookie(true)
+                    cookies.removeSessionCookies(null)
+                    cookies.flush()
+                    runCatching { android.webkit.WebStorage.getInstance().deleteAllData() }
+
                     WebView(context).apply {
+                        clearCache(true)
+                        clearFormData()
+                        clearHistory()
+                        cookies.setAcceptCookie(true)
                         cookies.setAcceptThirdPartyCookies(this, true)
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
-
-
                         settings.userAgentString = WebSettings.getDefaultUserAgent(context).replace("; wv", "")
-                        fun checkSignIn(url: String) {
+
+                        fun checkSignIn(view: WebView, url: String) {
                             if (finishing) return
                             val c1 = cookies.getCookie("https://www.youtube.com").orEmpty()
                             val c2 = cookies.getCookie("https://m.youtube.com").orEmpty()
@@ -138,27 +143,33 @@ fun SignInScreen(onDone: () -> Unit, onCancel: () -> Unit) {
                             val c5 = if (url.isNotEmpty()) cookies.getCookie(url).orEmpty() else ""
                             val header = listOf(c1, c2, c3, c4, c5).filter { it.isNotBlank() }.joinToString("; ")
                             if (!Account.looksSignedIn(header)) return
+                            if (!url.contains("youtube.com") && !header.contains("LOGIN_INFO") && !header.contains("SAPISID")) return
                             finishing = true
-                            scope.launch {
-                                runCatching { Account.completeSignIn(header) }
-                                    .onSuccess {
-                                        cookies.flush()
-                                        onDone()
-                                    }
-                                    .onFailure {
-                                        finishing = false
-                                        error = "Signed in, but YouTube didn't answer. Check your connection and try again."
-                                    }
+                            view.evaluateJavascript(
+                                """(function(){ try { var m = document.body.innerText.match(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/); return m ? m[0] : ''; } catch(e){ return ''; } })()"""
+                            ) { jsEmail ->
+                                val cleanEmail = jsEmail?.replace("\"", "")?.trim()?.takeIf { it.contains("@") && it.length > 5 }
+                                scope.launch {
+                                    runCatching { Account.completeSignIn(header, cleanEmail) }
+                                        .onSuccess {
+                                            cookies.flush()
+                                            onDone()
+                                        }
+                                        .onFailure {
+                                            finishing = false
+                                            error = "Signed in, but YouTube didn't answer. Check your connection and try again."
+                                        }
+                                }
                             }
                         }
 
                         webViewClient = object : WebViewClient() {
                             override fun onPageFinished(view: WebView, url: String) {
-                                checkSignIn(url)
+                                checkSignIn(view, url)
                             }
 
                             override fun doUpdateVisitedHistory(view: WebView, url: String, isReload: Boolean) {
-                                checkSignIn(url)
+                                checkSignIn(view, url)
                             }
                         }
                         loadUrl(SIGN_IN_URL)

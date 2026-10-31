@@ -3,6 +3,9 @@ package com.tensei.ytxtube
 import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.core.text.HtmlCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -470,22 +473,56 @@ object StreamCache {
 
 
 
+enum class PlaybackQualityMode(val label: String, val subtitle: String) {
+    AUTO("Auto (Recommended)", "Optimal quality based on your network speed"),
+    HIGH("High Quality", "Play in highest available quality"),
+    DATA_SAVER("Data Saver", "Play in lowest quality to save data");
+
+    companion object {
+        fun fromKey(key: String?): PlaybackQualityMode = when (key?.uppercase()) {
+            "HIGH" -> HIGH
+            "DATA_SAVER" -> DATA_SAVER
+            else -> AUTO
+        }
+    }
+}
+
 object QualityPreference {
     private const val KEY = "quality_height"
+    private const val KEY_VIDEO_MODE = "video_quality_mode"
+    private const val KEY_SHORTS_MODE = "shorts_quality_mode"
     private var prefs: SharedPreferences? = null
 
     @Volatile
     var height: Int? = null
         private set
 
+    var videoQualityMode by mutableStateOf(PlaybackQualityMode.AUTO)
+        private set
+
+    var shortsQualityMode by mutableStateOf(PlaybackQualityMode.AUTO)
+        private set
+
     fun init(context: Context) {
         prefs = context.getSharedPreferences("playback", Context.MODE_PRIVATE)
         height = prefs?.getInt(KEY, 0)?.takeIf { it > 0 }?.takeIf { it in QUALITY_LADDER }
+        videoQualityMode = PlaybackQualityMode.fromKey(prefs?.getString(KEY_VIDEO_MODE, "AUTO"))
+        shortsQualityMode = PlaybackQualityMode.fromKey(prefs?.getString(KEY_SHORTS_MODE, "AUTO"))
     }
 
     fun set(value: Int?) {
         height = value
         prefs?.edit()?.putInt(KEY, value ?: 0)?.apply()
+    }
+
+    fun updateVideoQualityMode(mode: PlaybackQualityMode) {
+        videoQualityMode = mode
+        prefs?.edit()?.putString(KEY_VIDEO_MODE, mode.name)?.apply()
+    }
+
+    fun updateShortsQualityMode(mode: PlaybackQualityMode) {
+        shortsQualityMode = mode
+        prefs?.edit()?.putString(KEY_SHORTS_MODE, mode.name)?.apply()
     }
 }
 
@@ -520,11 +557,13 @@ private fun VideoStream.fitsKbps(budgetKbps: Int): Boolean {
 private fun videoOrder(hdr: Boolean, formatRank: (MediaFormat?) -> Int): Comparator<VideoStream> =
     compareBy<VideoStream> { it.tier() }
         .thenBy { if (hdr && HdrSupport.isHdr(it)) 1 else 0 }
+        .thenBy { it.fps }
         .thenBy { it.bitrate }
         .thenBy { -formatRank(it.format) }
 
 private fun lowestFirst(formatRank: (MediaFormat?) -> Int): Comparator<VideoStream> =
     compareBy<VideoStream> { it.tier() }
+        .thenBy { it.fps }
         .thenBy { it.bitrate }
         .thenBy { formatRank(it.format) }
 
@@ -557,17 +596,29 @@ object StreamSelection {
         // hundreds of megabits while the connection behind it cannot feed 4K. A manual
         // choice still wins and is honoured as the closest rendition at or below it.
         val hdr = HdrSupport.isSupported
-        val video = if (chosen != null) {
-            candidates
-                .filter { it.tier() <= chosen }
-                .maxWithOrNull(videoOrder(hdr, ::formatRank))
-                ?: candidates.minWithOrNull(lowestFirst(::formatRank))
-        } else {
-            val budget = NetworkSpeed.sustainableKbps()
-            candidates
-                .filter { it.fitsKbps(budget) }
-                .maxWithOrNull(videoOrder(hdr, ::formatRank))
-                ?: candidates.minWithOrNull(lowestFirst(::formatRank))
+        val videoMode = QualityPreference.videoQualityMode
+        val video = when {
+            videoMode == PlaybackQualityMode.HIGH -> {
+                candidates.maxWithOrNull(videoOrder(hdr, ::formatRank))
+                    ?: candidates.minWithOrNull(lowestFirst(::formatRank))
+            }
+            videoMode == PlaybackQualityMode.DATA_SAVER -> {
+                candidates.minWithOrNull(lowestFirst(::formatRank))
+                    ?: candidates.maxWithOrNull(videoOrder(hdr, ::formatRank))
+            }
+            chosen != null -> {
+                candidates
+                    .filter { it.tier() <= chosen }
+                    .maxWithOrNull(videoOrder(hdr, ::formatRank))
+                    ?: candidates.minWithOrNull(lowestFirst(::formatRank))
+            }
+            else -> {
+                val budget = NetworkSpeed.sustainableKbps()
+                candidates
+                    .filter { it.fitsKbps(budget) }
+                    .maxWithOrNull(videoOrder(hdr, ::formatRank))
+                    ?: candidates.minWithOrNull(lowestFirst(::formatRank))
+            }
         }
 
 
@@ -575,15 +626,26 @@ object StreamSelection {
         val audio = selectAudio(info)
         val muxedCandidates = info.videoStreams
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP }
-        val muxed = if (chosen != null) {
-            muxedCandidates.filter { it.tier() <= chosen }
-                .maxWithOrNull(videoOrder(hdr, ::formatRank))
-                ?: muxedCandidates.minWithOrNull(lowestFirst(::formatRank))
-        } else {
-            val budget = NetworkSpeed.sustainableKbps()
-            muxedCandidates.filter { it.fitsKbps(budget) }
-                .maxWithOrNull(videoOrder(hdr, ::formatRank))
-                ?: muxedCandidates.minWithOrNull(lowestFirst(::formatRank))
+        val muxed = when {
+            videoMode == PlaybackQualityMode.HIGH -> {
+                muxedCandidates.maxWithOrNull(videoOrder(hdr, ::formatRank))
+                    ?: muxedCandidates.minWithOrNull(lowestFirst(::formatRank))
+            }
+            videoMode == PlaybackQualityMode.DATA_SAVER -> {
+                muxedCandidates.minWithOrNull(lowestFirst(::formatRank))
+                    ?: muxedCandidates.maxWithOrNull(videoOrder(hdr, ::formatRank))
+            }
+            chosen != null -> {
+                muxedCandidates.filter { it.tier() <= chosen }
+                    .maxWithOrNull(videoOrder(hdr, ::formatRank))
+                    ?: muxedCandidates.minWithOrNull(lowestFirst(::formatRank))
+            }
+            else -> {
+                val budget = NetworkSpeed.sustainableKbps()
+                muxedCandidates.filter { it.fitsKbps(budget) }
+                    .maxWithOrNull(videoOrder(hdr, ::formatRank))
+                    ?: muxedCandidates.minWithOrNull(lowestFirst(::formatRank))
+            }
         }
         return Picked(video, audio, muxed, hls)
     }
@@ -656,28 +718,42 @@ object StreamSelection {
         fun order(): Comparator<VideoStream> =
             compareBy<VideoStream> { it.tier() }
                 .thenBy { if (hdr && HdrSupport.isHdr(it)) 1 else 0 }
-                .thenBy { if (it.codec?.startsWith("avc") == true) 1 else 0 }
+                .thenBy { it.fps }
+                .thenBy { if (it.format == MediaFormat.WEBM) 1 else 0 }
                 .thenBy { it.bitrate }
 
         fun lowest(): Comparator<VideoStream> =
             compareBy<VideoStream> { it.tier() }
-                .thenBy { if (it.codec?.startsWith("avc") == true) 0 else 1 }
+                .thenBy { it.fps }
                 .thenBy { it.bitrate }
 
         fun muxedOrder(): Comparator<VideoStream> =
             compareBy<VideoStream> { it.tier() }
-                .thenBy { if (it.codec?.startsWith("avc") == true) 1 else 0 }
+                .thenBy { if (hdr && HdrSupport.isHdr(it)) 1 else 0 }
+                .thenBy { it.fps }
                 .thenBy { it.bitrate }
 
         val candidates = info.videoOnlyStreams
             .filter { it.isUrl && it.deliveryMethod == DeliveryMethod.PROGRESSIVE_HTTP && it.height > 0 && it.tier() <= 2160 }
-        val video = if (chosen != null) {
-            candidates.filter { it.tier() <= chosen }.maxWithOrNull(order())
-                ?: candidates.minWithOrNull(lowest())
-        } else {
-            val budget = NetworkSpeed.sustainableKbps()
-            candidates.filter { it.fitsKbps(budget) }.maxWithOrNull(order())
-                ?: candidates.minWithOrNull(lowest())
+        val shortsMode = QualityPreference.shortsQualityMode
+        val video = when {
+            shortsMode == PlaybackQualityMode.HIGH -> {
+                candidates.maxWithOrNull(order())
+                    ?: candidates.minWithOrNull(lowest())
+            }
+            shortsMode == PlaybackQualityMode.DATA_SAVER -> {
+                candidates.minWithOrNull(lowest())
+                    ?: candidates.maxWithOrNull(order())
+            }
+            chosen != null -> {
+                candidates.filter { it.tier() <= chosen }.maxWithOrNull(order())
+                    ?: candidates.minWithOrNull(lowest())
+            }
+            else -> {
+                val budget = NetworkSpeed.sustainableKbps()
+                candidates.filter { it.fitsKbps(budget) }.maxWithOrNull(order())
+                    ?: candidates.minWithOrNull(lowest())
+            }
         }
         val audio = audioTracks(info).firstOrNull { it.isOriginal }?.stream
             ?: info.audioStreams.filter { it.isUrl }
@@ -686,13 +762,24 @@ object StreamSelection {
         if (video != null && audio != null) return Picked(video, audio, null)
 
         val muxedCandidates = info.videoStreams.filter { it.isUrl && it.height > 0 }
-        val muxed = if (chosen != null) {
-            muxedCandidates.filter { it.tier() <= chosen }.maxWithOrNull(muxedOrder())
-                ?: muxedCandidates.minWithOrNull(lowest())
-        } else {
-            val budget = NetworkSpeed.sustainableKbps()
-            muxedCandidates.filter { it.fitsKbps(budget) }.maxWithOrNull(muxedOrder())
-                ?: muxedCandidates.minWithOrNull(lowest())
+        val muxed = when {
+            shortsMode == PlaybackQualityMode.HIGH -> {
+                muxedCandidates.maxWithOrNull(muxedOrder())
+                    ?: muxedCandidates.minWithOrNull(lowest())
+            }
+            shortsMode == PlaybackQualityMode.DATA_SAVER -> {
+                muxedCandidates.minWithOrNull(lowest())
+                    ?: muxedCandidates.maxWithOrNull(muxedOrder())
+            }
+            chosen != null -> {
+                muxedCandidates.filter { it.tier() <= chosen }.maxWithOrNull(muxedOrder())
+                    ?: muxedCandidates.minWithOrNull(lowest())
+            }
+            else -> {
+                val budget = NetworkSpeed.sustainableKbps()
+                muxedCandidates.filter { it.fitsKbps(budget) }.maxWithOrNull(muxedOrder())
+                    ?: muxedCandidates.minWithOrNull(lowest())
+            }
         }
         return Picked(null, null, muxed)
     }
@@ -849,4 +936,60 @@ fun fetchDislikeCount(videoId: String): Long {
             org.json.JSONObject(r.body?.string().orEmpty()).optLong("dislikes", -1L)
         }
     }.getOrElse { -1L }
+}
+
+object SeenShorts {
+    private const val PREFS_NAME = "seen_shorts_prefs"
+    private const val KEY_SEEN = "seen_ids"
+    private const val MAX_SEEN = 5000
+    private val memorySeen = LinkedHashSet<String>()
+    private var initialized = false
+
+    fun init(context: Context) {
+        if (initialized) return
+        initialized = true
+        runCatching {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            val saved = prefs.getString(KEY_SEEN, "") ?: ""
+            if (saved.isNotEmpty()) {
+                saved.split(",").filter { it.isNotBlank() }.forEach { memorySeen.add(it) }
+            }
+        }
+    }
+
+    fun markSeen(context: Context, videoId: String) {
+        if (videoId.isBlank()) return
+        init(context)
+        synchronized(memorySeen) {
+            memorySeen.remove(videoId)
+            memorySeen.add(videoId)
+            while (memorySeen.size > MAX_SEEN) {
+                val oldest = memorySeen.firstOrNull() ?: break
+                memorySeen.remove(oldest)
+            }
+            runCatching {
+                val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                prefs.edit().putString(KEY_SEEN, memorySeen.joinToString(",")).apply()
+            }
+        }
+    }
+
+    fun isSeen(videoId: String): Boolean {
+        synchronized(memorySeen) {
+            return memorySeen.contains(videoId)
+        }
+    }
+
+    fun allSeen(): Set<String> {
+        synchronized(memorySeen) {
+            return memorySeen.toSet()
+        }
+    }
+
+    fun filterUnseen(videos: List<VideoItem>): List<VideoItem> {
+        synchronized(memorySeen) {
+            if (memorySeen.isEmpty()) return videos
+            return videos.filter { it.id !in memorySeen }
+        }
+    }
 }

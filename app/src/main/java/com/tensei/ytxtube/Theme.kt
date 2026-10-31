@@ -446,14 +446,14 @@ object ThemeSettings {
 
     var mode by mutableStateOf("system")
         private set
-    var useSystemFont by mutableStateOf(true)
+    var useSystemFont by mutableStateOf(false)
         private set
 
     fun init(context: Context) {
         val p = context.getSharedPreferences("appearance", Context.MODE_PRIVATE).also { prefs = it }
         seed = p.getString("seed", null) ?: SEED_YOUTUBE
         mode = p.getString("mode", "system") ?: "system"
-        useSystemFont = p.getBoolean("use_system_font", true)
+        useSystemFont = p.getBoolean("use_system_font", false)
     }
 
     fun choose(seedHex: String?) {
