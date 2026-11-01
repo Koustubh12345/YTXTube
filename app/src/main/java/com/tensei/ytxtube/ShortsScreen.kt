@@ -6,6 +6,7 @@ import android.net.Uri
 import android.view.KeyEvent
 import android.view.TextureView
 import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -109,14 +110,18 @@ import java.io.ByteArrayInputStream
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.VideoSize
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.cache.CacheDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.MergingMediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.exoplayer.source.preload.DefaultPreloadManager
+import androidx.media3.exoplayer.source.preload.PreloadException
+import androidx.media3.exoplayer.source.preload.PreloadManagerListener
+import androidx.media3.exoplayer.source.preload.TargetPreloadStatusControl
 import androidx.media3.exoplayer.upstream.DefaultAllocator
 import coil.compose.AsyncImage
 import com.kyant.backdrop.Backdrop
@@ -230,16 +235,28 @@ fun ShortsScreen(
     val focusManager = LocalFocusManager.current
 
     val view = androidx.compose.ui.platform.LocalView.current
-    DisposableEffect(Unit) {
-        val window = (view.context as? android.app.Activity)?.window
+    val dark = isDarkTheme()
+    DisposableEffect(dark) {
+        val activity = view.context as? androidx.activity.ComponentActivity
+        val window = activity?.window ?: (view.context as? android.app.Activity)?.window
         val controller = window?.let { androidx.core.view.WindowCompat.getInsetsController(it, view) }
-        val lightStatus = controller?.isAppearanceLightStatusBars
-        val lightNav = controller?.isAppearanceLightNavigationBars
         controller?.isAppearanceLightStatusBars = false
         controller?.isAppearanceLightNavigationBars = false
         onDispose {
-            if (lightStatus != null) controller.isAppearanceLightStatusBars = lightStatus
-            if (lightNav != null) controller.isAppearanceLightNavigationBars = lightNav
+            controller?.isAppearanceLightStatusBars = !dark
+            controller?.isAppearanceLightNavigationBars = !dark
+            if (activity != null) {
+                val barStyle = if (dark) {
+                    androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                } else {
+                    androidx.activity.SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                }
+                runCatching {
+                    activity.enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+                    controller?.isAppearanceLightStatusBars = !dark
+                    controller?.isAppearanceLightNavigationBars = !dark
+                }
+            }
         }
     }
     val feed = remember(startItem?.id) { ShortsFeedState(scope, startItem) }
@@ -255,19 +272,17 @@ fun ShortsScreen(
         }
     }
 
-    val exo = remember {
-        buildShortsPlayer(context).apply {
-            repeatMode = Player.REPEAT_MODE_ONE
-            playWhenReady = true
+    // One shared preload manager and player: the next Short is prepared inside the
+    // manager, and the wrapped source is handed to the player so a swipe starts on
+    // samples that are already buffered instead of rebuilding the source.
+    val preload = remember { ShortsPreloader(context) }
+    val exo = preload.player
+    DisposableEffect(Unit) {
+        onDispose {
+            exo.release()
+            preload.release()
         }
     }
-    val preloader = remember {
-        buildShortsPlayer(context).apply {
-            volume = 0f
-            playWhenReady = false
-        }
-    }
-    DisposableEffect(Unit) { onDispose { exo.release(); preloader.release() } }
 
     val pip = LocalPictureInPicture.current
     val inPip = pip?.active == true
@@ -282,17 +297,29 @@ fun ShortsScreen(
         }
     }
 
-    LaunchedEffect(exo.isPlaying) {
-        pip?.updateAutoPip(exo.isPlaying, 9f / 16f)
+    LaunchedEffect(Unit) {
+        pip?.updateAutoPip(false)
+    }
+
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, exo) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE || event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                exo.pause()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
     }
 
     var resumeAfterOverlay by remember { mutableStateOf(false) }
-    LaunchedEffect(active, inPip) {
-        if (!active && !inPip) {
+    LaunchedEffect(active) {
+        if (!active) {
             resumeAfterOverlay = exo.playWhenReady
             exo.pause()
-            preloader.pause()
-        } else if (resumeAfterOverlay && (active || inPip)) {
+        } else if (resumeAfterOverlay) {
             resumeAfterOverlay = false
             exo.playWhenReady = true
         }
@@ -366,6 +393,14 @@ fun ShortsScreen(
                 loading = false
                 playError = error.message ?: "Playback failed."
             }
+
+            override fun onTracksChanged(tracks: Tracks) {
+                // The player now owns the period, so the preload manager can drop
+                // its reference without clearing the samples the player is using.
+                if (tracks.groups.isNotEmpty()) {
+                    preload.releaseAdoptedIfCurrent(exo.currentMediaItem?.mediaId)
+                }
+            }
         }
         exo.addListener(listener)
         onDispose { exo.removeListener(listener) }
@@ -413,7 +448,7 @@ fun ShortsScreen(
             return@LaunchedEffect
         }
         likeCount = loaded.likeCount
-        val source = shortsSource(context, loaded)
+        val source = preload.take(currentId) ?: shortsSource(context, loaded, currentId)
         if (source == null) {
             loading = false
             playError = "This Short has no playable stream."
@@ -431,24 +466,26 @@ fun ShortsScreen(
         }
     }
 
-    // Resolve the next Shorts while this one plays, and quietly buffer the upcoming
-    // stream into the shared MediaCache so the swipe lands on already-downloaded bytes.
+    // Resolve several Shorts ahead while this one plays and hand them to Media3's
+    // preload manager. It buffers the first seconds of each source in rank order;
+    // a swipe then adopts that wrapped source instead of rebuilding it.
     LaunchedEffect(feed.videos, page) {
-        val upcoming = feed.videos.drop(page + 1).take(3)
-        if (upcoming.isEmpty()) {
-            preloader.stop()
-            preloader.clearMediaItems()
-            return@LaunchedEffect
-        }
+        val upcoming = feed.videos.drop(page + 1).take(5)
+        val keep = upcoming.mapTo(HashSet()) { it.id }
+        feed.videos.getOrNull(page)?.let { keep.add(it.id) }
+        preload.setCurrentPlayingIndex(page)
+        preload.keepOnly(keep)
+        if (upcoming.isEmpty()) return@LaunchedEffect
+
         withContext(Dispatchers.IO) { upcoming.forEach { StreamCache.prefetch(it.id) } }
-        val next = upcoming.first()
-        val loaded = withContext(Dispatchers.IO) {
-            runCatching { StreamCache.getOrLoad(next.id) }.getOrNull()
-        } ?: return@LaunchedEffect
-        val source = shortsSource(context, loaded) ?: return@LaunchedEffect
-        preloader.stop()
-        preloader.setMediaSource(source)
-        preloader.prepare()
+        upcoming.forEachIndexed { index, item ->
+            if (preload.has(item.id)) return@forEachIndexed
+            val loaded = withContext(Dispatchers.IO) {
+                runCatching { StreamCache.getOrLoad(item.id) }.getOrNull()
+            } ?: return@forEachIndexed
+            val source = shortsSource(context, loaded, item.id) ?: return@forEachIndexed
+            preload.prepare(item.id, source, page + 1 + index)
+        }
     }
 
     LaunchedEffect(muted) { exo.volume = if (muted) 0f else 1f }
@@ -663,7 +700,7 @@ fun ShortsScreen(
                                             runCatching { StreamCache.getOrLoad(retryId) }.getOrNull()
                                         }
                                         info = loaded
-                                        val source = loaded?.let { shortsSource(context, it) }
+                                        val source = loaded?.let { shortsSource(context, it, retryId) }
                                         if (source != null) {
                                             playError = null
                                             exo.setMediaSource(source)
@@ -1218,9 +1255,15 @@ private fun ShortsVideo(player: ExoPlayer, modifier: Modifier = Modifier) {
     }
 }
 
+/**
+ * Owns the Shorts player and Media3's preload manager. Both come from one builder so
+ * they share the playback looper, renderer capabilities, bandwidth meter and load
+ * control; that is what lets [PreloadMediaSource] hand a prepared period straight to
+ * the player on a swipe.
+ */
 @OptIn(UnstableApi::class)
-private fun buildShortsPlayer(context: Context): ExoPlayer {
-    val loadControl = DefaultLoadControl.Builder()
+private class ShortsPreloader(context: Context) {
+    private val loadControl = DefaultLoadControl.Builder()
         .setAllocator(DefaultAllocator(true, 64 * 1024))
         .setBufferDurationsMs(
             500,
@@ -1230,43 +1273,167 @@ private fun buildShortsPlayer(context: Context): ExoPlayer {
         )
         .setBackBuffer(2_000, true)
         .setPrioritizeTimeOverSizeThresholds(true)
-        .setTargetBufferBytes(4 * 1024 * 1024)
+        .setTargetBufferBytes(12 * 1024 * 1024)
         .build()
-    return ExoPlayer.Builder(context)
+
+    @Volatile
+    private var currentIndex = 0
+
+    private val builder = DefaultPreloadManager.Builder(
+        context,
+        TargetPreloadStatusControl<Int, DefaultPreloadManager.PreloadStatus> { rank ->
+            // Rank is the absolute feed position; the manager orders by distance
+            // from the current page. The immediate next Short gets the deepest
+            // head start, the ones after it progressively less.
+            val distance = (rank - currentIndex).coerceAtLeast(1)
+            val targetMs = when (distance) {
+                1 -> 5_000L
+                2 -> 3_000L
+                else -> 1_500L
+            }
+            DefaultPreloadManager.PreloadStatus.specifiedRangeLoaded(targetMs)
+        },
+    )
         .setLoadControl(loadControl)
         .setBandwidthMeter(PlaybackBandwidth.get())
-        .build().apply {
-            videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
+        .setDataSourceFactory(MediaCache.dataSourceFactory(context))
+
+    private val manager = builder.build()
+
+    val player: ExoPlayer = builder.buildExoPlayer(
+        ExoPlayer.Builder(context).setBandwidthMeter(PlaybackBandwidth.get()),
+    ).apply {
+        videoScalingMode = C.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING
+        repeatMode = Player.REPEAT_MODE_ONE
+        playWhenReady = true
+    }
+
+    private val owned = HashMap<String, MediaSource>()
+    private val wrapped = HashMap<String, MediaSource>()
+    private var adoptedId: String? = null
+    private var adoptedWrapped: MediaSource? = null
+    private var released = false
+
+    init {
+        manager.addListener(object : PreloadManagerListener {
+            override fun onError(error: PreloadException) {
+                val id = error.mediaItem.mediaId
+                if (id.isBlank() || id == adoptedId) return
+                removeInternal(id)
+            }
+        })
+    }
+
+    /**
+     * The preload manager keys its holders by the wrapped [PreloadMediaSource], not by
+     * the source handed to [DefaultPreloadManager.add], so always remove the wrapper.
+     */
+    private fun removeInternal(id: String) {
+        val prepared = wrapped.remove(id)
+        val raw = owned.remove(id)
+        when {
+            prepared != null -> runCatching { manager.remove(prepared) }
+            raw != null -> runCatching { manager.remove(raw.mediaItem) }
         }
+    }
+
+    fun has(id: String): Boolean = owned.containsKey(id) || wrapped.containsKey(id)
+
+    fun prepare(id: String, source: MediaSource, rank: Int) {
+        if (released || has(id)) return
+        runCatching {
+            manager.add(source, rank)
+            owned[id] = source
+            wrapped[id] = manager.getMediaSource(source.mediaItem)
+                ?: throw IllegalStateException("No preload source")
+            manager.invalidate()
+        }.onFailure {
+            removeInternal(id)
+        }
+    }
+
+    /** Returns the prepared wrapper for [id], or null when it was never offered. */
+    fun take(id: String): MediaSource? {
+        if (released) return null
+        releaseAdopted()
+        val source = wrapped.remove(id) ?: run {
+            owned.remove(id)
+            return null
+        }
+        owned.remove(id)
+        adoptedId = id
+        adoptedWrapped = source
+        return source
+    }
+
+    /** Called once the foreground player owns the period and its tracks are selected. */
+    fun releaseAdoptedIfCurrent(mediaId: String?) {
+        if (mediaId != null && mediaId == adoptedId) releaseAdopted()
+    }
+
+    fun releaseAdopted() {
+        if (adoptedId == null) return
+        adoptedId = null
+        val source = adoptedWrapped
+        adoptedWrapped = null
+        if (source != null) runCatching { manager.remove(source) }
+    }
+
+    /** Drops preloads for pages that are no longer close to the current one. */
+    fun keepOnly(ids: Set<String>) {
+        if (released) return
+        (owned.keys + wrapped.keys).toSet()
+            .filter { it !in ids && it != adoptedId }
+            .forEach(::removeInternal)
+    }
+
+    fun setCurrentPlayingIndex(index: Int) {
+        if (released) return
+        currentIndex = index
+        manager.setCurrentPlayingIndex(index)
+    }
+
+    fun release() {
+        if (released) return
+        released = true
+        adoptedId = null
+        adoptedWrapped = null
+        owned.clear()
+        wrapped.clear()
+        runCatching { manager.release() }
+    }
 }
 
 @OptIn(UnstableApi::class)
-private fun createStreamSource(context: Context, stream: Stream): MediaSource {
+private fun createStreamSource(context: Context, stream: Stream, mediaId: String): MediaSource {
     val url = stream.content
     val dsFactory = MediaCache.dataSourceFactory(context)
-    val mediaItem = MediaItem.fromUri(url)
+    val mediaItem = MediaItem.Builder()
+        .setUri(url)
+        .setMediaId(mediaId)
+        .build()
     return ProgressiveMediaSource.Factory(dsFactory).createMediaSource(mediaItem)
 }
 
 @OptIn(UnstableApi::class)
-private fun shortsSource(context: Context, info: StreamInfo): MediaSource? {
+private fun shortsSource(context: Context, info: StreamInfo, mediaId: String): MediaSource? {
     val picked = StreamSelection.pickShorts(info)
 
     val muxed = picked.muxed
     if (muxed != null && !muxed.content.isNullOrBlank()) {
-        return createStreamSource(context, muxed)
+        return createStreamSource(context, muxed, mediaId)
     }
 
     val video = picked.video
     val audio = picked.audio
     if (video != null && audio != null && !video.content.isNullOrBlank() && !audio.content.isNullOrBlank()) {
-        val videoSource = createStreamSource(context, video)
-        val audioSource = createStreamSource(context, audio)
+        val videoSource = createStreamSource(context, video, mediaId)
+        val audioSource = createStreamSource(context, audio, mediaId)
         return MergingMediaSource(videoSource, audioSource)
     }
 
     val fallback = info.videoStreams.firstOrNull { it.isUrl }
         ?: info.videoOnlyStreams.firstOrNull { it.isUrl }
-    return fallback?.let { createStreamSource(context, it) }
+    return fallback?.let { createStreamSource(context, it, mediaId) }
 }
 

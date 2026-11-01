@@ -664,22 +664,15 @@ class PlayerState(private val scope: CoroutineScope) {
 
 
 
-    fun setQuality(height: Int?) {
-        QualityPreference.set(height)
+    fun setQuality(height: Int?, preferHdr: Boolean = QualityPreference.hdr) {
+        QualityPreference.set(height, preferHdr)
         val player = controller ?: return
         val item = details?.item ?: current ?: return
 
-        runCatching {
-            val builder = player.trackSelectionParameters.buildUpon()
-            if (height != null) {
-                builder.setMaxVideoSize(Int.MAX_VALUE, height)
-                builder.setMinVideoSize(0, (height - 1).coerceAtLeast(0))
-            } else {
-                builder.clearVideoSizeConstraints()
-            }
-            player.trackSelectionParameters = builder.build()
-        }
-
+        // The service rebuilds the source from the exact rendition StreamSelection
+        // picked. Forcing a min/max height here would filter that rendition out when
+        // an HDR row falls back to a lower SDR height, leaving the player with no
+        // video track at all.
         if (item.isLive) {
             details = details?.copy(quality = height?.let { "${it}p" } ?: "Live")
             return
@@ -690,7 +683,10 @@ class PlayerState(private val scope: CoroutineScope) {
         replaceCurrent(player, item, position)
         player.playWhenReady = playWhenReady
         val info = StreamCache.get(item.id) ?: return
-        details = details?.copy(quality = StreamSelection.pick(info).playedHeight?.let { "${it}p" })
+        val picked = StreamSelection.pick(info)
+        details = details?.copy(
+            quality = picked.playedHeight?.let { "${it}p${if (picked.hdr) " HDR" else ""}" },
+        )
     }
 
     /** Refresh the audio-track list from the resolved stream info. */
@@ -1097,7 +1093,20 @@ class PlayerState(private val scope: CoroutineScope) {
             }
             val auto = if (formats.size > 1) "Auto" else null
             val labelTier = qualityTier(format.width, format.height)
-            playingFormat = listOfNotNull(auto, "${labelTier}p", codec, format.id?.substringAfterLast(":")?.let { "itag $it" }).joinToString(" · ")
+            val codecText = format.codecs?.lowercase(java.util.Locale.US).orEmpty()
+            val hdr = format.colorInfo?.let {
+                it.colorTransfer == C.COLOR_TRANSFER_ST2084 || it.colorTransfer == C.COLOR_TRANSFER_HLG ||
+                    it.hdrStaticInfo != null
+            } == true || codecText.contains("vp09.02") || codecText.contains("vp9.2") ||
+                (codecText.startsWith("av01") &&
+                    (codecText.split('.').getOrNull(3)?.take(2)?.toIntOrNull() ?: 0) >= 10)
+            playingFormat = listOfNotNull(
+                auto,
+                "${labelTier}p",
+                if (hdr) "HDR" else null,
+                codec,
+                format.id?.substringAfterLast(":")?.let { "itag $it" },
+            ).joinToString(" · ")
         }
     }
 }

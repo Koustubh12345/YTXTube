@@ -70,7 +70,8 @@ fun DownloadQualitySheet(video: VideoItem, onDownloadStarted: ((String) -> Unit)
         runCatching { Downloads.options(video.id) }
             .onSuccess { list ->
                 options = list
-                selected = list.firstOrNull { it.height == 720 }?.height ?: list.firstOrNull()?.height
+                // Highest available by default: a 4K video should offer 4K, not 720p.
+                selected = list.firstOrNull()?.height
             }
             .onFailure { error = it.message ?: "Could not load the available qualities" }
     }
@@ -151,7 +152,7 @@ fun DownloadQualitySheet(video: VideoItem, onDownloadStarted: ((String) -> Unit)
                     Button(
                         onClick = {
                             if (choice != null) {
-                                val added = Downloads.enqueue(video, choice.height)
+                                val added = Downloads.enqueue(video, choice)
                                 onDownloadStarted?.invoke(if (added) "Downloading ${choice.label} • ${video.title}" else "Already in downloads")
                                 onDismiss()
                             }
@@ -202,6 +203,8 @@ private fun QualityChoiceRow(option: DownloadOption, selected: Boolean, onClick:
                     if (isNotEmpty()) append(" · ")
                     append(formatBytes(option.estimatedBytes))
                 }
+                if (isNotEmpty()) append(" · ")
+                append(option.containerLabel)
                 append(if (option.needsMux) " · video + audio" else " · with audio")
             }
             Text(subtitle, color = c.onSurfaceVariant, fontSize = 11.5.sp)
@@ -323,7 +326,8 @@ private fun DownloadSectionPill(label: String, count: Int, selected: Boolean, on
 private fun DownloadRow(task: DownloadTask, onOpen: (() -> Unit)?) {
     val c = MaterialTheme.colorScheme
     var menu by remember(task.key) { mutableStateOf(false) }
-    val running = task.status == DownloadStatus.Downloading || task.status == DownloadStatus.Queued
+    val running = task.status == DownloadStatus.Downloading || task.status == DownloadStatus.Queued ||
+        task.status == DownloadStatus.Processing
 
     Column(
         Modifier
@@ -353,7 +357,11 @@ private fun DownloadRow(task: DownloadTask, onOpen: (() -> Unit)?) {
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    if (task.height > 0) "${task.channel} · ${task.height}p" else "${task.channel} · Audio",
+                    if (task.height > 0) {
+                        "${task.channel} · ${task.height}p${if (task.hdr) " HDR" else ""}"
+                    } else {
+                        "${task.channel} · Audio"
+                    },
                     color = c.onSurfaceVariant,
                     fontSize = 11.5.sp,
                     maxLines = 1,
@@ -384,7 +392,7 @@ private fun DownloadRow(task: DownloadTask, onOpen: (() -> Unit)?) {
                 }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     when (task.status) {
-                        DownloadStatus.Downloading, DownloadStatus.Queued -> DropdownMenuItem(
+                        DownloadStatus.Downloading, DownloadStatus.Queued, DownloadStatus.Processing -> DropdownMenuItem(
                             text = { Text("Pause") },
                             onClick = { menu = false; Downloads.pause(task) },
                         )
@@ -427,6 +435,7 @@ private fun DownloadRow(task: DownloadTask, onOpen: (() -> Unit)?) {
                     when (task.status) {
                         DownloadStatus.Downloading -> "Downloading"
                         DownloadStatus.Queued -> "Waiting"
+                        DownloadStatus.Processing -> "Finishing"
                         DownloadStatus.Paused -> "Paused"
                         DownloadStatus.Failed -> "Failed"
                         DownloadStatus.Complete -> "Downloaded"
@@ -443,6 +452,7 @@ private fun DownloadRow(task: DownloadTask, onOpen: (() -> Unit)?) {
 private fun statusText(task: DownloadTask): String = when (task.status) {
     DownloadStatus.Complete -> "Downloaded · ${formatBytes(task.file.length())}"
     DownloadStatus.Downloading -> "Downloading ${(task.progress * 100).toInt()}%"
+    DownloadStatus.Processing -> "Combining video and audio…"
     DownloadStatus.Queued -> "Waiting to download"
     DownloadStatus.Paused -> "Paused · ${formatBytes(task.downloaded)} downloaded"
     DownloadStatus.Failed -> task.error ?: "Download failed"

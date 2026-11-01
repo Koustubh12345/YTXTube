@@ -910,10 +910,22 @@ private fun SettingsClickRow(
 private fun QualitySelectionDialog(
     title: String,
     currentMode: PlaybackQualityMode,
-    onSelect: (PlaybackQualityMode) -> Unit,
+    currentSpecificHeight: Int?,
+    onSelectMode: (PlaybackQualityMode) -> Unit,
+    onSelectSpecific: (Int) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
+    val specificOptions = listOf(
+        2160 to "2160p (4K UHD)",
+        1440 to "1440p (2K QHD)",
+        1080 to "1080p (Full HD)",
+        720 to "720p (HD)",
+        480 to "480p (SD)",
+        360 to "360p",
+        240 to "240p",
+        144 to "144p",
+    )
     Dialog(onDismissRequest = onDismiss) {
         Card(
             shape = RoundedCornerShape(24.dp),
@@ -922,7 +934,12 @@ private fun QualitySelectionDialog(
                 .fillMaxWidth()
                 .padding(16.dp),
         ) {
-            Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+                    .verticalScroll(rememberScrollState())
+            ) {
                 Text(
                     text = title,
                     fontFamily = RoundedHeavy,
@@ -938,14 +955,18 @@ private fun QualitySelectionDialog(
                 )
                 Spacer(Modifier.height(14.dp))
 
-                PlaybackQualityMode.entries.forEach { mode ->
+                listOf(
+                    PlaybackQualityMode.AUTO,
+                    PlaybackQualityMode.HIGH,
+                    PlaybackQualityMode.DATA_SAVER
+                ).forEach { mode ->
                     val selected = mode == currentMode
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(14.dp))
                             .background(if (selected) c.primaryContainer.copy(alpha = 0.5f) else Color.Transparent)
-                            .pressable { onSelect(mode) }
+                            .pressable { onSelectMode(mode) }
                             .padding(horizontal = 12.dp, vertical = 10.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -981,6 +1002,54 @@ private fun QualitySelectionDialog(
                         }
                     }
                     Spacer(Modifier.height(4.dp))
+                }
+
+                HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 10.dp))
+
+                Text(
+                    text = "Or lock to specific resolution",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    color = c.primary,
+                )
+                Spacer(Modifier.height(8.dp))
+
+                specificOptions.forEach { (res, label) ->
+                    val isChosen = currentMode == PlaybackQualityMode.SPECIFIC && currentSpecificHeight == res
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(if (isChosen) c.primaryContainer.copy(alpha = 0.5f) else Color.Transparent)
+                            .pressable { onSelectSpecific(res) }
+                            .padding(horizontal = 12.dp, vertical = 9.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = label,
+                            modifier = Modifier.weight(1f),
+                            fontWeight = if (isChosen) FontWeight.SemiBold else FontWeight.Normal,
+                            fontSize = 13.5.sp,
+                            color = if (isChosen) c.primary else c.onSurface,
+                        )
+                        if (isChosen) {
+                            Box(
+                                modifier = Modifier
+                                    .size(20.dp)
+                                    .clip(CircleShape)
+                                    .background(c.primary),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Check,
+                                    contentDescription = "Selected",
+                                    tint = c.onPrimary,
+                                    modifier = Modifier.size(13.dp),
+                                )
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(3.dp))
                 }
 
                 Spacer(Modifier.height(10.dp))
@@ -1276,7 +1345,7 @@ private fun GeneralModificationContent(context: Context) {
 
         SettingsClickRow(
             title = "Video Quality",
-            subtitle = QualityPreference.videoQualityMode.label,
+            subtitle = QualityPreference.videoQualityDisplay,
             onClick = { showVideoQualityDialog = true },
         )
 
@@ -1284,7 +1353,7 @@ private fun GeneralModificationContent(context: Context) {
 
         SettingsClickRow(
             title = "Shorts Quality",
-            subtitle = QualityPreference.shortsQualityMode.label,
+            subtitle = QualityPreference.shortsQualityDisplay,
             onClick = { showShortsQualityDialog = true },
         )
 
@@ -1310,8 +1379,13 @@ private fun GeneralModificationContent(context: Context) {
         QualitySelectionDialog(
             title = "Video Quality",
             currentMode = QualityPreference.videoQualityMode,
-            onSelect = {
+            currentSpecificHeight = QualityPreference.specificVideoHeight,
+            onSelectMode = {
                 QualityPreference.updateVideoQualityMode(it)
+                showVideoQualityDialog = false
+            },
+            onSelectSpecific = {
+                QualityPreference.setSpecificVideoQuality(it)
                 showVideoQualityDialog = false
             },
             onDismiss = { showVideoQualityDialog = false }
@@ -1322,8 +1396,13 @@ private fun GeneralModificationContent(context: Context) {
         QualitySelectionDialog(
             title = "Shorts Quality",
             currentMode = QualityPreference.shortsQualityMode,
-            onSelect = {
+            currentSpecificHeight = QualityPreference.specificShortsHeight,
+            onSelectMode = {
                 QualityPreference.updateShortsQualityMode(it)
+                showShortsQualityDialog = false
+            },
+            onSelectSpecific = {
+                QualityPreference.setSpecificShortsQuality(it)
                 showShortsQualityDialog = false
             },
             onDismiss = { showShortsQualityDialog = false }
@@ -1361,6 +1440,7 @@ private data class StorageData(
     val deviceFree: Long,
     val ytxApp: Long,
     val ytxCache: Long,
+    val ytxDownloads: Long,
     val ytxData: Long,
     val ytxTotal: Long,
 )
@@ -1395,6 +1475,7 @@ private fun calculateStorageData(context: Context): StorageData {
 
         val appSize = runCatching { File(context.packageCodePath).length() }.getOrDefault(18_000_000L)
         val cacheSize = getFolderSize(context.cacheDir) + (context.externalCacheDir?.let { getFolderSize(it) } ?: 0L)
+        val downloadsSize = getFolderSize(Downloads.currentDownloadDir)
         val dataSize = getFolderSize(context.filesDir)
 
         StorageData(
@@ -1403,11 +1484,12 @@ private fun calculateStorageData(context: Context): StorageData {
             deviceFree = free,
             ytxApp = appSize,
             ytxCache = cacheSize,
+            ytxDownloads = downloadsSize,
             ytxData = dataSize,
-            ytxTotal = appSize + cacheSize + dataSize,
+            ytxTotal = appSize + cacheSize + downloadsSize + dataSize,
         )
     }.getOrDefault(
-        StorageData(128_000_000_000L, 45_000_000_000L, 83_000_000_000L, 18_000_000L, 24_000_000L, 10_000_000L, 52_000_000L)
+        StorageData(128_000_000_000L, 45_000_000_000L, 83_000_000_000L, 18_000_000L, 24_000_000L, 0L, 10_000_000L, 52_000_000L)
     )
 }
 
@@ -1416,6 +1498,14 @@ private fun StorageUsageContent(context: Context, onCacheCleared: () -> Unit) {
     val c = MaterialTheme.colorScheme
     var storageData by remember { mutableStateOf(calculateStorageData(context)) }
     var clearedNotice by remember { mutableStateOf<String?>(null) }
+
+    // Continuously monitor and refresh storage in real-time as background tasks or downloads run
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(1500)
+            storageData = calculateStorageData(context)
+        }
+    }
 
     val usedGb = storageData.deviceUsed / 1_000_000_000.0
     val totalGb = storageData.deviceTotal / 1_000_000_000.0
@@ -1503,7 +1593,8 @@ private fun StorageUsageContent(context: Context, onCacheCleared: () -> Unit) {
 
         StorageItemRow(label = "App & Core engine", sizeStr = formatStorageBytes(storageData.ytxApp))
         StorageItemRow(label = "Stream & video cache", sizeStr = formatStorageBytes(storageData.ytxCache))
-        StorageItemRow(label = "Saved offline data", sizeStr = formatStorageBytes(storageData.ytxData))
+        StorageItemRow(label = "Downloaded videos & music", sizeStr = formatStorageBytes(storageData.ytxDownloads))
+        StorageItemRow(label = "Saved offline data & config", sizeStr = formatStorageBytes(storageData.ytxData))
 
         Spacer(Modifier.height(14.dp))
 
@@ -1514,13 +1605,13 @@ private fun StorageUsageContent(context: Context, onCacheCleared: () -> Unit) {
                 .background(Color(0xFF2E1517))
                 .pressable {
                     StreamCache.invalidateAll()
-                    Downloads.clearAll()
+                    Downloads.deleteAllDownloadsAndWork()
                     runCatching {
                         context.cacheDir.deleteRecursively()
                         context.externalCacheDir?.deleteRecursively()
                     }
                     storageData = calculateStorageData(context)
-                    clearedNotice = "Cache cleared! Freed up memory."
+                    clearedNotice = "Cache & downloads cleared!"
                     onCacheCleared()
                 }
                 .padding(vertical = 9.dp),
@@ -1535,7 +1626,7 @@ private fun StorageUsageContent(context: Context, onCacheCleared: () -> Unit) {
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = clearedNotice ?: "Clear YTXTube Cache",
+                    text = clearedNotice ?: "Clear YTXTube Cache & Downloads",
                     color = Color(0xFFEF5350),
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 12.5.sp,

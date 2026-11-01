@@ -1601,22 +1601,30 @@ object InnerTube {
 
     private val POPULAR_TOPICS = listOf(
         "Trending",
-        "Popular videos",
-        "Top music hits",
         "Viral videos",
+        "Must watch",
+        "Popular videos",
+        "Mind blowing discoveries",
+        "Top music hits",
+        "Tech & AI innovations",
+        "Cinema & movie trailers",
+        "Epic nature & wildlife",
         "Gaming highlights",
-        "New movie trailers",
-        "Technology news",
-        "Podcasts",
-        "Comedy clips",
-        "Documentary",
-        "Sports highlights",
-        "Science",
-        "Animation",
-        "Auto and vehicles",
-        "Gadget reviews",
-        "Live events",
+        "Amazing talents & skills",
+        "Science & space exploration",
+        "Stand-up comedy clips",
+        "Documentary deep dives",
+        "Greatest sports moments",
+        "Creative animation",
+        "Automotive & supercars",
+        "World wonders & travel",
+        "Top podcasts & interviews",
+        "Interesting facts",
+        "Live music performances",
+        "Gadget reviews & setups",
     )
+
+    private val anonSeenVideoIds = LinkedHashSet<String>()
 
     suspend fun homeFeed(next: String? = null): FeedPage = withContext(Dispatchers.IO) {
         // Signed in: this is the real personalised FEwhat_to_watch feed.
@@ -1633,21 +1641,46 @@ object InnerTube {
         loadAnonymousInfiniteHomeFeed(next)
     }
 
-    private suspend fun loadAnonymousInfiniteHomeFeed(next: String?): FeedPage {
-        // Initial page: start with current real Trending videos
+    private suspend fun loadAnonymousInfiniteHomeFeed(next: String?): FeedPage = kotlinx.coroutines.coroutineScope {
+        // Initial page: deliver a dynamic, diverse, and unique mix each time
         if (next == null) {
-            val trending = runCatching { YouTube.trending(null) }.getOrNull()
-            if (trending != null && trending.videos.isNotEmpty()) {
-                val nextToken = if (!trending.next.isNullOrBlank()) "anon_feed:trend:${trending.next}" else "anon_feed:0:start"
-                return FeedPage(trending.videos, nextToken)
+            val randomTopics = POPULAR_TOPICS.shuffled().take(3)
+            val trendingDeferred = async { runCatching { YouTube.trending(null) }.getOrNull() }
+            val topic1Deferred = async { runCatching { YouTube.search(randomTopics[0]) }.getOrDefault(emptyList()) }
+            val topic2Deferred = async { runCatching { YouTube.search(randomTopics[1]) }.getOrDefault(emptyList()) }
+            val topic3Deferred = async { runCatching { YouTube.search(randomTopics[2]) }.getOrDefault(emptyList()) }
+
+            val trendingVideos = trendingDeferred.await()?.videos.orEmpty()
+            val list1 = topic1Deferred.await()
+            val list2 = topic2Deferred.await()
+            val list3 = topic3Deferred.await()
+
+            val combined = ArrayList<VideoItem>()
+            val maxLen = maxOf(trendingVideos.size, list1.size, list2.size, list3.size)
+            for (i in 0 until maxLen) {
+                if (i < trendingVideos.size) combined.add(trendingVideos[i])
+                if (i < list1.size) combined.add(list1[i])
+                if (i < list2.size) combined.add(list2[i])
+                if (i < list3.size) combined.add(list3[i])
             }
-            val firstTopic = runCatching { YouTube.searchPage(POPULAR_TOPICS[0], null) }.getOrNull()
-            if (firstTopic != null && firstTopic.videos.isNotEmpty()) {
-                val nextToken = if (!firstTopic.next.isNullOrBlank()) "anon_feed:0:${firstTopic.next}" else "anon_feed:1:start"
-                return FeedPage(firstTopic.videos, nextToken)
+
+            val unique = combined.distinctBy { it.id }
+            val fresh = synchronized(anonSeenVideoIds) {
+                unique.filter { it.id !in anonSeenVideoIds }
             }
-            val searchFallback = runCatching { YouTube.search("Trending") }.getOrDefault(emptyList())
-            return FeedPage(searchFallback, "anon_feed:1:start")
+            val result = if (fresh.size >= 12) fresh else unique
+
+            synchronized(anonSeenVideoIds) {
+                result.forEach { anonSeenVideoIds.add(it.id) }
+                if (anonSeenVideoIds.size > 800) {
+                    val excess = anonSeenVideoIds.size - 500
+                    val iter = anonSeenVideoIds.iterator()
+                    repeat(excess) { if (iter.hasNext()) { iter.next(); iter.remove() } }
+                }
+            }
+
+            val nextIdx = (0 until POPULAR_TOPICS.size).random()
+            return@coroutineScope FeedPage(result, "anon_feed:$nextIdx:start")
         }
 
         // Continuing pagination token: "anon_feed:<topicIndexOrTrend>:<pageUrlOrMarker>"
@@ -1659,7 +1692,7 @@ object InnerTube {
             val moreTrending = runCatching { YouTube.trending(cursor) }.getOrNull()
             if (moreTrending != null && moreTrending.videos.isNotEmpty()) {
                 val nextToken = if (!moreTrending.next.isNullOrBlank()) "anon_feed:trend:${moreTrending.next}" else "anon_feed:0:start"
-                return FeedPage(moreTrending.videos, nextToken)
+                return@coroutineScope FeedPage(moreTrending.videos, nextToken)
             }
         }
 
@@ -1674,13 +1707,21 @@ object InnerTube {
 
             val result = runCatching { YouTube.searchPage(query, pageToFetch) }.getOrNull()
             if (result != null && result.videos.isNotEmpty()) {
+                val filtered = synchronized(anonSeenVideoIds) {
+                    result.videos.filter { it.id !in anonSeenVideoIds }
+                }.ifEmpty { result.videos }
+
+                synchronized(anonSeenVideoIds) {
+                    filtered.forEach { anonSeenVideoIds.add(it.id) }
+                }
+
                 val nextToken = if (!result.next.isNullOrBlank()) {
                     "anon_feed:$currentIdx:${result.next}"
                 } else {
                     val nextIdx = (currentIdx + 1) % POPULAR_TOPICS.size
                     "anon_feed:$nextIdx:start"
                 }
-                return FeedPage(result.videos, nextToken)
+                return@coroutineScope FeedPage(filtered, nextToken)
             }
         }
 
@@ -1688,7 +1729,7 @@ object InnerTube {
         val randomTopic = POPULAR_TOPICS.random()
         val fallbackVideos = runCatching { YouTube.search(randomTopic) }.getOrDefault(emptyList())
         val nextIdx = (topicIdx + 1) % POPULAR_TOPICS.size
-        return FeedPage(fallbackVideos, "anon_feed:$nextIdx:start")
+        return@coroutineScope FeedPage(fallbackVideos, "anon_feed:$nextIdx:start")
     }
 
     suspend fun channelVideos(channelId: String, continuation: String? = null): FeedPage = withContext(Dispatchers.IO) {

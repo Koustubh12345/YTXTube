@@ -1002,6 +1002,7 @@ fun QualitySheet(state: PlayerState, onDismiss: () -> Unit) {
     val c = MaterialTheme.colorScheme
     val details = state.details ?: return
     val chosen = QualityPreference.height
+    val chosenHdr = QualityPreference.hdr
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -1043,8 +1044,14 @@ fun QualitySheet(state: PlayerState, onDismiss: () -> Unit) {
                 } else emptyList()
             }
             qualities.forEach { h ->
-                QualityRow("${h}p", qualityTag(h), chosen == h) {
-                    state.setQuality(h)
+                QualityRow("${h}p", qualityTag(h), chosen == h && !chosenHdr) {
+                    state.setQuality(h, preferHdr = false)
+                    onDismiss()
+                }
+            }
+            details.hdrQualities.forEach { h ->
+                QualityRow("${h}p HDR", listOfNotNull("HDR", qualityTag(h)).joinToString(" · "), chosen == h && chosenHdr) {
+                    state.setQuality(h, preferHdr = true)
                     onDismiss()
                 }
             }

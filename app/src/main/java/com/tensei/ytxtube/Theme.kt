@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.graphics.drawable.ColorDrawable
 import android.os.Build
+import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ColorScheme
@@ -569,11 +572,27 @@ fun YtxTubeTheme(content: @Composable () -> Unit) {
 private fun SystemBars(dark: Boolean, windowBg: Color) {
     val view = LocalView.current
     if (view.isInEditMode) return
+    val activity = view.context as? ComponentActivity
     SideEffect {
-        val window = (view.context as? Activity)?.window ?: return@SideEffect
+        val window = activity?.window ?: (view.context as? Activity)?.window ?: return@SideEffect
         val controller = WindowCompat.getInsetsController(window, view)
+        // isAppearanceLightStatusBars = true means DARK icons on LIGHT background
+        // isAppearanceLightStatusBars = false means LIGHT/WHITE icons on DARK/AMOLED background
         controller.isAppearanceLightStatusBars = !dark
         controller.isAppearanceLightNavigationBars = !dark
+        if (activity != null) {
+            val barStyle = if (dark) {
+                SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+            } else {
+                SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+            }
+            runCatching {
+                activity.enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+                // Re-enforce in case enableEdgeToEdge reset controller flags
+                controller.isAppearanceLightStatusBars = !dark
+                controller.isAppearanceLightNavigationBars = !dark
+            }
+        }
     }
     DisposableEffect(windowBg) {
         (view.context as? Activity)?.window?.setBackgroundDrawable(ColorDrawable(windowBg.toArgb()))

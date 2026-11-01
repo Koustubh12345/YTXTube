@@ -130,6 +130,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setHighestRefreshRate()
+        enableHdrOutput()
 
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED
@@ -144,15 +145,26 @@ class MainActivity : ComponentActivity() {
         setHighestRefreshRate()
     }
 
+    override fun onPause() {
+        super.onPause()
+        shortsPlayerHolder?.pause()
+    }
+
+    override fun onStop() {
+        super.onStop()
+        shortsPlayerHolder?.pause()
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        val pip = pipController ?: return
-        if (!pip.supported) return
         val sp = shortsPlayerHolder
         if (sp != null && sp.isPlaying) {
-            pip.enter(9f / 16f)
+            // Shorts should not enter PiP or play in background
+            sp.pause()
             return
         }
+        val pip = pipController ?: return
+        if (!pip.supported) return
         val p = playerHolder
         if (p != null && p.isPlaying && !p.isMusicMode) {
             pip.enter(p.videoAspect.takeIf { it > 0 } ?: (16f / 9f))
@@ -195,6 +207,21 @@ class MainActivity : ComponentActivity() {
                     lp.preferredDisplayModeId = bestMode.modeId
                     window.attributes = lp
                 }
+            }
+        }
+    }
+
+    /**
+     * HDR video only reaches the panel when the window opts into the HDR color mode.
+     * Without this the compositor tone-maps 10-bit BT.2020 frames back to SDR.
+     */
+    private fun enableHdrOutput() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        runCatching {
+            @Suppress("DEPRECATION")
+            val disp = display ?: return
+            if (disp.hdrCapabilities?.supportedHdrTypes?.isNotEmpty() == true) {
+                window.colorMode = android.content.pm.ActivityInfo.COLOR_MODE_HDR
             }
         }
     }
@@ -427,12 +454,8 @@ fun YtxTubeApp() {
 
     BackHandler(enabled = showFullscreen) { exitFullscreen() }
     BackHandler(enabled = shortsEntry != null) {
-        if (isShortsPlaying && pip.supported) {
-            val entered = pip.enter(9f / 16f)
-            if (!entered) shortsEntry = null
-        } else {
-            shortsEntry = null
-        }
+        mainActivity?.shortsPlayerHolder?.pause()
+        shortsEntry = null
     }
     BackHandler(enabled = updateState.visible) { updateState.dismiss() }
 
@@ -446,13 +469,8 @@ fun YtxTubeApp() {
                 pip.updateAutoPip(false)
                 activity.moveTaskToBack(true)
             }
-        } else if (isShortsPlaying && pip.supported) {
-            val entered = pip.enter(9f / 16f)
-            if (!entered) {
-                pip.updateAutoPip(false)
-                activity.moveTaskToBack(true)
-            }
         } else {
+            mainActivity?.shortsPlayerHolder?.pause()
             pip.updateAutoPip(false)
             activity.moveTaskToBack(true)
         }
@@ -762,7 +780,7 @@ fun YtxTubeApp() {
         }
 
 
-        val showBottomBar = !openSettings && !openSearch && shortsEntry == null && !pip.active
+        val showBottomBar = !openSettings && shortsEntry == null && !pip.active
         AnimatedVisibility(
             visible = showBottomBar,
             enter = slideInVertically(tween(260, easing = Motion.Emphasized)) { it } + fadeIn(tween(160)),

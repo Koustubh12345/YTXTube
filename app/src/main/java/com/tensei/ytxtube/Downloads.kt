@@ -6,6 +6,7 @@ import android.media.MediaExtractor
 import android.media.MediaFormat as AndroidMediaFormat
 import android.media.MediaMuxer
 import android.net.Uri
+import android.os.Build
 import android.os.Environment
 import android.os.SystemClock
 import android.util.Log
@@ -44,7 +45,7 @@ import kotlin.math.min
 
 private const val TAG = "YTXTubeDl"
 
-enum class DownloadStatus { Queued, Downloading, Paused, Complete, Failed }
+enum class DownloadStatus { Queued, Downloading, Processing, Paused, Complete, Failed }
 
 
 
@@ -59,6 +60,8 @@ class DownloadTask(
     val durationSec: Long,
     val height: Int,
     val fileName: String,
+    val container: String = "mp4",
+    val hdr: Boolean = false,
     downloaded: Long = 0L,
     total: Long = -1L,
     status: DownloadStatus = DownloadStatus.Queued,
@@ -76,7 +79,7 @@ class DownloadTask(
 
     val progress: Float
         get() = when {
-            status == DownloadStatus.Complete -> 1f
+            status == DownloadStatus.Complete || status == DownloadStatus.Processing -> 1f
             total > 0L -> (downloaded.toFloat() / total).coerceIn(0f, 1f)
             else -> 0f
         }
@@ -93,9 +96,12 @@ data class DownloadOption(
     val video: VideoStream?,
     val audio: AudioStream?,
     val estimatedBytes: Long,
+    val container: String = "mp4",
+    val hdr: Boolean = false,
 ) {
     val needsMux: Boolean get() = muxed == null
-    val label: String get() = "${height}p"
+    val label: String get() = "${height}p${if (hdr) " HDR" else ""}"
+    val containerLabel: String get() = if (container == "webm") "WebM" else "MP4"
 }
 
 
@@ -116,12 +122,18 @@ object Downloads {
         private set
 
     val busy: Boolean
-        get() = tasks.any { it.status == DownloadStatus.Downloading || it.status == DownloadStatus.Queued }
+        get() = tasks.any {
+            it.status == DownloadStatus.Downloading || it.status == DownloadStatus.Queued ||
+                it.status == DownloadStatus.Processing
+        }
 
 
     val progress: Float
         get() {
-            val active = tasks.filter { it.status == DownloadStatus.Downloading || it.status == DownloadStatus.Queued }
+            val active = tasks.filter {
+                it.status == DownloadStatus.Downloading || it.status == DownloadStatus.Queued ||
+                    it.status == DownloadStatus.Processing
+            }
             return if (active.isEmpty()) 0f else active.map { it.progress }.average().toFloat()
         }
 
@@ -173,40 +185,101 @@ object Downloads {
 
 
     suspend fun options(id: String): List<DownloadOption> = withContext(Dispatchers.IO) {
-        optionsFor(StreamCache.getOrLoad(id))
+        val info = StreamCache.getOrLoad(id)
+        HdrFormats.install(id, info)
+        optionsFor(info)
     }
 
     private fun optionsFor(info: StreamInfo): List<DownloadOption> {
-        val audio = bestAudio(info)
+        val audioMp4 = bestAudio(info, webm = false)
+        val audioOpus = bestAudio(info, webm = true)
+        val muxed = info.videoStreams.filter {
+            it.isUrl && it.height > 0 && it.format == StreamFormat.MPEG_4 &&
+                it.codec.orEmpty().startsWith("avc")
+        }
+        val videos = info.videoOnlyStreams.filter {
+            it.isUrl && it.deliveryMethod == org.schabi.newpipe.extractor.stream.DeliveryMethod.PROGRESSIVE_HTTP &&
+                it.height > 0
+        }
         val heights = sortedSetOf<Int>()
-        info.videoStreams.filter { it.format == StreamFormat.MPEG_4 && it.codec.orEmpty().startsWith("avc") && it.height > 0 }
-            .forEach { heights.add(qualityTier(it.width, it.height)) }
-        info.videoOnlyStreams.filter { it.format == StreamFormat.MPEG_4 && it.codec.orEmpty().startsWith("avc") && it.height > 0 }
-            .forEach { heights.add(qualityTier(it.width, it.height)) }
+        muxed.forEach { heights.add(qualityTier(it.width, it.height)) }
+        videos.forEach { heights.add(qualityTier(it.width, it.height)) }
 
         return heights.sortedDescending().mapNotNull { height ->
-            val muxed = info.videoStreams
-                .filter {
-                    it.format == StreamFormat.MPEG_4 && it.codec.orEmpty().startsWith("avc") &&
-                        qualityTier(it.width, it.height) == height
-                }
+            val atHeight = videos.filter { qualityTier(it.width, it.height) == height }
+            val sdr = atHeight.filterNot(HdrSupport::isHdrCodec)
+            val hdr = atHeight.filter(HdrSupport::isHdrCodec)
+
+            val muxedAt = muxed.filter { qualityTier(it.width, it.height) == height }
                 .maxByOrNull { it.bitrate }
-            val video = info.videoOnlyStreams
-                .filter {
-                    it.format == StreamFormat.MPEG_4 && it.codec.orEmpty().startsWith("avc") &&
-                        qualityTier(it.width, it.height) == height
-                }
-                .maxByOrNull { it.bitrate }
-            if (muxed == null && (video == null || audio == null)) return@mapNotNull null
-            val bits = if (muxed != null) muxed.bitrate.toLong()
-            else (video?.bitrate ?: 0).toLong() + (audio?.averageBitrate ?: 0)
-            val estimate = if (bits > 0 && info.duration > 0) bits * info.duration / 8 else -1L
-            DownloadOption(height, muxed, video, audio, estimate)
+            if (muxedAt != null) {
+                return@mapNotNull option(height, muxedAt, null, null, info, "mp4", false)
+            }
+
+            // MP4/H.264 is the most compatible choice through 1080p.
+            val avc = sdr.filter {
+                it.format == StreamFormat.MPEG_4 && it.codec.orEmpty().startsWith("avc")
+            }.maxByOrNull { it.bitrate }
+            if (height <= 1080 && avc != null && audioMp4 != null) {
+                return@mapNotNull option(height, null, avc, audioMp4, info, "mp4", false)
+            }
+
+            // 1440p/2160p: VP9 WebM + Opus, muxed by MediaMuxer on Android 10+.
+            val vp9 = sdr.filter {
+                it.format == StreamFormat.WEBM && it.codec.orEmpty().startsWith("vp9")
+            }.maxByOrNull { it.bitrate }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && vp9 != null && audioOpus != null) {
+                return@mapNotNull option(height, null, vp9, audioOpus, info, "webm", false)
+            }
+
+            val av1 = sdr.filter {
+                it.format == StreamFormat.MPEG_4 && it.codec.orEmpty().startsWith("av01")
+            }.maxByOrNull { it.bitrate }
+            if (Build.VERSION.SDK_INT >= 34 && av1 != null && audioMp4 != null) {
+                return@mapNotNull option(height, null, av1, audioMp4, info, "mp4", false)
+            }
+
+            // A video that only ships HDR at this height is still downloadable.
+            val hdrVp9 = hdr.filter {
+                it.format == StreamFormat.WEBM && it.codec.orEmpty().startsWith("vp9")
+            }.maxByOrNull { it.bitrate }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && hdrVp9 != null && audioOpus != null) {
+                return@mapNotNull option(height, null, hdrVp9, audioOpus, info, "webm", true)
+            }
+            val hdrAv1 = hdr.filter {
+                it.format == StreamFormat.MPEG_4 && it.codec.orEmpty().startsWith("av01")
+            }.maxByOrNull { it.bitrate }
+            if (Build.VERSION.SDK_INT >= 34 && hdrAv1 != null && audioMp4 != null) {
+                return@mapNotNull option(height, null, hdrAv1, audioMp4, info, "mp4", true)
+            }
+            null
         }
     }
 
-    private fun bestAudio(info: StreamInfo): AudioStream? = info.audioStreams
-        .filter { it.format == StreamFormat.M4A }
+    private fun option(
+        height: Int,
+        muxed: VideoStream?,
+        video: VideoStream?,
+        audio: AudioStream?,
+        info: StreamInfo,
+        container: String,
+        hdr: Boolean,
+    ): DownloadOption {
+        val bits = if (muxed != null) muxed.bitrate.toLong()
+        else (video?.bitrate ?: 0).toLong() + (audio?.averageBitrate ?: 0)
+        val estimate = if (bits > 0 && info.duration > 0) bits * info.duration / 8 else -1L
+        return DownloadOption(height, muxed, video, audio, estimate, container, hdr)
+    }
+
+    private fun bestAudio(info: StreamInfo, webm: Boolean): AudioStream? = info.audioStreams
+        .filter {
+            if (webm) {
+                it.format == StreamFormat.WEBMA_OPUS || it.format == StreamFormat.OPUS ||
+                    (it.format == StreamFormat.WEBMA && it.codec.orEmpty().startsWith("opus"))
+            } else {
+                it.format == StreamFormat.M4A
+            }
+        }
         .maxByOrNull { max(it.averageBitrate, it.bitrate) }
 
     val musicDownloads: List<DownloadTask>
@@ -235,19 +308,21 @@ object Downloads {
         return true
     }
 
-    fun enqueue(video: VideoItem, height: Int): Boolean {
+    fun enqueue(video: VideoItem, option: DownloadOption): Boolean {
         if (!initialized) return false
-        val key = "${video.id}@$height"
+        val key = "${video.id}@${option.height}"
         if (tasks.any { it.key == key }) return false
-        val name = fileNameFor(video, height)
+        val name = fileNameFor(video, option.height, option.container, option.hdr)
         val task = DownloadTask(
             videoId = video.id,
             title = video.title,
             channel = video.channel,
             thumbnail = video.thumbnail,
             durationSec = video.durationSec,
-            height = height,
+            height = option.height,
             fileName = name,
+            container = option.container,
+            hdr = option.hdr,
             status = DownloadStatus.Queued,
         )
         tasks.add(0, task)
@@ -257,7 +332,9 @@ object Downloads {
     }
 
     fun pause(task: DownloadTask) {
-        if (task.status != DownloadStatus.Downloading && task.status != DownloadStatus.Queued) return
+        if (task.status != DownloadStatus.Downloading && task.status != DownloadStatus.Queued &&
+            task.status != DownloadStatus.Processing
+        ) return
         task.status = DownloadStatus.Paused
         jobs.remove(task.key)?.cancel()
         persist()
@@ -298,7 +375,20 @@ object Downloads {
         lastReport.clear()
         prefs.edit().putString(PERSIST_KEY, "[]").apply()
 
-        runCatching { dir.listFiles()?.forEach { it.delete() } }
+        runCatching { dir.listFiles()?.forEach { if (it.isFile && it.name.endsWith(".part")) it.delete() } }
+    }
+
+    /** Permanently deletes all downloaded video/music files and clears all tasks. */
+    fun deleteAllDownloadsAndWork() {
+        clearAll()
+        runCatching {
+            val d = currentDownloadDir
+            if (d.exists() && d.isDirectory) {
+                d.listFiles()?.forEach { file ->
+                    if (file.isFile) file.delete()
+                }
+            }
+        }
     }
 
     private fun pump() {
@@ -335,7 +425,9 @@ object Downloads {
                 }
             }
         } catch (e: CancellationException) {
-            if (task.status == DownloadStatus.Downloading) task.status = DownloadStatus.Paused
+            if (task.status == DownloadStatus.Downloading || task.status == DownloadStatus.Processing) {
+                task.status = DownloadStatus.Paused
+            }
         } catch (t: Throwable) {
             Log.w(TAG, "download ${task.key} failed", t)
             task.error = t.message ?: "Download failed"
@@ -349,17 +441,21 @@ object Downloads {
     }
 
     private suspend fun runDownload(task: DownloadTask) {
+        task.status = DownloadStatus.Downloading
         StreamCache.invalidate(task.videoId)
         val info = StreamCache.getOrLoad(task.videoId)
+        HdrFormats.install(task.videoId, info)
 
         if (task.height == 0) {
-            val audio = bestAudio(info) ?: throw IOException("Audio stream not available")
+            val audio = bestAudio(info, webm = false) ?: throw IOException("Audio stream not available")
             val work = workFile(task, "audio")
             work.delete()
             val remote = probe(audio.content)
             task.total = remote.total
-            transfer(audio.content, work, remote) { done -> report(task, done) }
-            if (work.length() <= 0L) throw IOException("Empty audio download")
+            val received = transfer(audio.content, work, remote) { done -> report(task, done) }
+            if (received != remote.total || work.length() != remote.total) {
+                throw IOException("Audio download incomplete (${work.length()} of ${remote.total} bytes)")
+            }
             val target = task.file
             target.delete()
             if (!work.renameTo(target)) {
@@ -382,8 +478,10 @@ object Downloads {
             work.delete()
             val remote = probe(muxed.content)
             task.total = remote.total
-            transfer(muxed.content, work, remote) { done -> report(task, done) }
-            if (work.length() <= 0L) throw IOException("Empty download")
+            val received = transfer(muxed.content, work, remote) { done -> report(task, done) }
+            if (received != remote.total || work.length() != remote.total) {
+                throw IOException("Download incomplete (${work.length()} of ${remote.total} bytes)")
+            }
             val target = task.file
             target.delete()
             if (!work.renameTo(target)) {
@@ -408,21 +506,32 @@ object Downloads {
             val aDone = AtomicLong(0)
             coroutineScope {
                 launch {
-                    transfer(video.content, vWork, vRemote) { n ->
+                    val n = transfer(video.content, vWork, vRemote) { n ->
                         report(task, vDone.addAndGet(n) + aDone.get())
+                    }
+                    if (n != vRemote.total || vWork.length() != vRemote.total) {
+                        throw IOException("Video download incomplete (${vWork.length()} of ${vRemote.total} bytes)")
                     }
                 }
                 launch {
-                    transfer(audio.content, aWork, aRemote) { n ->
+                    val n = transfer(audio.content, aWork, aRemote) { n ->
                         report(task, aDone.addAndGet(n) + vDone.get())
+                    }
+                    if (n != aRemote.total || aWork.length() != aRemote.total) {
+                        throw IOException("Audio download incomplete (${aWork.length()} of ${aRemote.total} bytes)")
                     }
                 }
             }
+            task.downloaded = task.total
+            task.status = DownloadStatus.Processing
+            persist()
+
             val target = task.file
             target.delete()
-            mux(vWork, aWork, target)
+            mux(vWork, aWork, target, option.container)
             vWork.delete()
             aWork.delete()
+            if (!target.exists() || target.length() <= 0L) throw IOException("Could not finish the download")
             task.total = target.length()
             task.downloaded = task.total
         }
@@ -485,30 +594,58 @@ object Downloads {
         file: File,
         remote: Remote,
         onProgress: (Long) -> Unit,
-    ) {
-        if (!remote.ranges) {
-            downloadSequential(url, file, onProgress)
-            return
-        }
+    ): Long {
+        if (!remote.ranges) return downloadSequential(url, file, remote, onProgress)
+        // Eight lanes saturate a fast link without making YouTube's edge throttle the
+        // last few percent, which is what used to leave a pre-sized file full of holes.
         val chunks = when {
-            remote.total >= 32L * 1024 * 1024 -> 16
-            remote.total >= 8L * 1024 * 1024 -> 12
-            remote.total >= 2L * 1024 * 1024 -> 8
-            else -> 4
+            remote.total >= 16L * 1024 * 1024 -> 8
+            remote.total >= 4L * 1024 * 1024 -> 6
+            remote.total >= 1024L * 1024 -> 4
+            else -> 2
         }
         RandomAccessFile(file, "rw").use { it.setLength(remote.total) }
         val span = remote.total / chunks
-        coroutineScope {
+        val received = coroutineScope {
             (0 until chunks).map { index ->
                 val start = index * span
                 val end = if (index == chunks - 1) remote.total - 1 else (index + 1) * span - 1
                 async(Dispatchers.IO) { downloadRange(url, file, start, end, onProgress) }
-            }.awaitAll()
+            }.awaitAll().sum()
         }
-        if (file.length() != remote.total) RandomAccessFile(file, "rw").use { it.setLength(remote.total) }
+        if (received != remote.total) {
+            throw IOException("Only $received of ${remote.total} bytes arrived")
+        }
+        return received
     }
 
-    private fun downloadRange(url: String, file: File, start: Long, end: Long, onProgress: (Long) -> Unit) {
+    private fun downloadRange(
+        url: String,
+        file: File,
+        start: Long,
+        end: Long,
+        onProgress: (Long) -> Unit,
+    ): Long {
+        var last: Throwable? = null
+        repeat(3) { attempt ->
+            try {
+                return downloadRangeOnce(url, file, start, end, onProgress)
+            } catch (t: Throwable) {
+                if (t is CancellationException) throw t
+                last = t
+                Thread.sleep(350L * (attempt + 1))
+            }
+        }
+        throw IOException("Range $start-$end failed", last)
+    }
+
+    private fun downloadRangeOnce(
+        url: String,
+        file: File,
+        start: Long,
+        end: Long,
+        onProgress: (Long) -> Unit,
+    ): Long {
         fun makeRangeReq(u: String, addRangeQuery: Boolean): Request {
             val finalUrl = if (addRangeQuery) withRange(u, start, end) else u
             return Request.Builder()
@@ -526,26 +663,40 @@ object Downloads {
         }
         val response = res ?: throw IOException("Range request failed")
         response.use { r ->
-            if (!r.isSuccessful) throw HttpStatusException(r.code)
+            if (r.code != 206) throw IOException("Server did not honour the byte range (HTTP ${r.code})")
+            val contentRange = r.header("Content-Range").orEmpty()
+            val rangeStart = contentRange.substringAfter("bytes ", "")
+                .substringBefore('-').toLongOrNull()
+            if (rangeStart != null && rangeStart != start) {
+                throw IOException("Server returned range $rangeStart instead of $start")
+            }
             val body = r.body ?: throw IOException("Empty response")
+            var received = 0L
             RandomAccessFile(file, "rw").use { out ->
                 out.seek(start)
                 var position = start
-                val buffer = ByteArray(1024 * 1024)
+                val buffer = ByteArray(256 * 1024)
                 val source = body.source()
                 while (position <= end) {
                     val want = min(buffer.size.toLong(), end - position + 1).toInt()
                     val read = source.read(buffer, 0, want)
-                    if (read < 0) break
+                    if (read <= 0) throw IOException("Connection ended at ${position - start} of ${end - start + 1} bytes")
                     out.write(buffer, 0, read)
                     position += read
+                    received += read
                     onProgress(read.toLong())
                 }
             }
+            return received
         }
     }
 
-    private fun downloadSequential(url: String, file: File, onProgress: (Long) -> Unit) {
+    private fun downloadSequential(
+        url: String,
+        file: File,
+        remote: Remote,
+        onProgress: (Long) -> Unit,
+    ): Long {
         val req = Request.Builder()
             .url(url)
             .header("User-Agent", Net.USER_AGENT)
@@ -554,6 +705,7 @@ object Downloads {
         Net.client.newCall(req).execute().use { response ->
             if (!response.isSuccessful) throw HttpStatusException(response.code)
             val body = response.body ?: throw IOException("Empty response")
+            var received = 0L
             file.outputStream().buffered(256 * 1024).use { out ->
                 val source = body.source()
                 val buffer = ByteArray(256 * 1024)
@@ -561,9 +713,14 @@ object Downloads {
                     val read = source.read(buffer)
                     if (read < 0) break
                     out.write(buffer, 0, read)
+                    received += read
                     onProgress(read.toLong())
                 }
             }
+            if (remote.total > 0 && received != remote.total) {
+                throw IOException("Only $received of ${remote.total} bytes arrived")
+            }
+            return received
         }
     }
 
@@ -578,7 +735,10 @@ object Downloads {
 
 
 
-    private fun mux(video: File, audio: File, out: File) {
+    private fun mux(video: File, audio: File, out: File, container: String) {
+        if (container == "webm" && Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+            throw IOException("WebM downloads need Android 10 or newer")
+        }
         val videoEx = MediaExtractor()
         val audioEx = MediaExtractor()
         var muxer: MediaMuxer? = null
@@ -590,34 +750,43 @@ object Downloads {
             videoEx.selectTrack(vTrack)
             audioEx.selectTrack(aTrack)
 
-            muxer = MediaMuxer(out.absolutePath, MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4)
+            val outputFormat = if (container == "webm") {
+                MediaMuxer.OutputFormat.MUXER_OUTPUT_WEBM
+            } else {
+                MediaMuxer.OutputFormat.MUXER_OUTPUT_MPEG_4
+            }
+            muxer = MediaMuxer(out.absolutePath, outputFormat)
             val m = muxer
             val vOut = m.addTrack(videoEx.getTrackFormat(vTrack))
             val aOut = m.addTrack(audioEx.getTrackFormat(aTrack))
             m.start()
 
-            val buffer = ByteBuffer.allocateDirect(4 * 1024 * 1024)
+            val vBuffer = ByteBuffer.allocateDirect(4 * 1024 * 1024)
+            val aBuffer = ByteBuffer.allocateDirect(4 * 1024 * 1024)
             val info = MediaCodec.BufferInfo()
-            var vFirst = -1L
-            var aFirst = -1L
-
-            while (true) {
-                val size = videoEx.readSampleData(buffer, 0)
-                if (size < 0) break
-                val time = videoEx.sampleTime
-                if (vFirst < 0) vFirst = time
-                info.set(0, size, (time - vFirst).coerceAtLeast(0L), videoEx.sampleFlags)
-                m.writeSampleData(vOut, buffer, info)
-                videoEx.advance()
+            var vSize = videoEx.readSampleData(vBuffer, 0)
+            var aSize = audioEx.readSampleData(aBuffer, 0)
+            val base = when {
+                vSize >= 0 && aSize >= 0 -> min(videoEx.sampleTime, audioEx.sampleTime)
+                vSize >= 0 -> videoEx.sampleTime
+                aSize >= 0 -> audioEx.sampleTime
+                else -> 0L
             }
-            while (true) {
-                val size = audioEx.readSampleData(buffer, 0)
-                if (size < 0) break
-                val time = audioEx.sampleTime
-                if (aFirst < 0) aFirst = time
-                info.set(0, size, (time - aFirst).coerceAtLeast(0L), audioEx.sampleFlags)
-                m.writeSampleData(aOut, buffer, info)
-                audioEx.advance()
+
+            while (vSize >= 0 || aSize >= 0) {
+                val vTime = if (vSize >= 0) videoEx.sampleTime else Long.MAX_VALUE
+                val aTime = if (aSize >= 0) audioEx.sampleTime else Long.MAX_VALUE
+                if (vTime <= aTime) {
+                    info.set(0, vSize, (vTime - base).coerceAtLeast(0L), videoEx.sampleFlags)
+                    m.writeSampleData(vOut, vBuffer, info)
+                    videoEx.advance()
+                    vSize = videoEx.readSampleData(vBuffer, 0)
+                } else {
+                    info.set(0, aSize, (aTime - base).coerceAtLeast(0L), audioEx.sampleFlags)
+                    m.writeSampleData(aOut, aBuffer, info)
+                    audioEx.advance()
+                    aSize = audioEx.readSampleData(aBuffer, 0)
+                }
             }
 
             m.stop()
@@ -641,7 +810,7 @@ object Downloads {
 
 
 
-    private fun fileNameFor(video: VideoItem, height: Int): String {
+    private fun fileNameFor(video: VideoItem, height: Int, container: String = "mp4", hdr: Boolean = false): String {
         val safe = video.title
             .replace(Regex("[\\\\/:*?\"<>|\\n\\r\\t]"), " ")
             .replace(Regex("\\s+"), " ")
@@ -649,7 +818,9 @@ object Downloads {
             .take(64)
             .ifBlank { video.id }
         if (height == 0) return "$safe [Audio] ${video.id}.m4a"
-        return "$safe [${height}p] ${video.id}.mp4"
+        val hdrTag = if (hdr) " HDR" else ""
+        val extension = if (container == "webm") "webm" else "mp4"
+        return "$safe [${height}p$hdrTag] ${video.id}.$extension"
     }
 
     private fun workFile(task: DownloadTask, kind: String): File =
@@ -674,6 +845,8 @@ object Downloads {
                         .put("duration", task.durationSec)
                         .put("height", task.height)
                         .put("file", task.fileName)
+                        .put("container", task.container)
+                        .put("hdr", task.hdr)
                         .put("downloaded", task.downloaded)
                         .put("total", task.total)
                         .put("status", task.status.name),
@@ -696,6 +869,8 @@ object Downloads {
                 val status = runCatching {
                     DownloadStatus.valueOf(json.optString("status"))
                 }.getOrDefault(DownloadStatus.Paused)
+                val container = json.optString("container")
+                    .ifBlank { if (name.endsWith(".webm")) "webm" else "mp4" }
                 val task = DownloadTask(
                     videoId = json.optString("id"),
                     title = json.optString("title"),
@@ -704,6 +879,8 @@ object Downloads {
                     durationSec = json.optLong("duration"),
                     height = height,
                     fileName = name,
+                    container = container,
+                    hdr = json.optBoolean("hdr", name.contains(" HDR]")),
                     downloaded = json.optLong("downloaded"),
                     total = json.optLong("total", -1L),
                     status = if (status == DownloadStatus.Complete) status else DownloadStatus.Paused,
@@ -724,7 +901,11 @@ object Downloads {
                 if (name.endsWith(".part") || name.startsWith(".")) return@forEach
                 if (!existing.add(name)) return@forEach
                 val audio = name.endsWith(".m4a")
-                val ext = if (audio) ".m4a" else ".mp4"
+                val ext = when {
+                    audio -> ".m4a"
+                    name.endsWith(".webm") -> ".webm"
+                    else -> ".mp4"
+                }
                 if (!name.endsWith(ext)) return@forEach
                 val stem = name.removeSuffix(ext)
                 val id = stem.takeLast(11)
@@ -744,6 +925,8 @@ object Downloads {
                         durationSec = 0L,
                         height = height,
                         fileName = name,
+                        container = if (ext == ".webm") "webm" else "mp4",
+                        hdr = label.contains(" HDR]"),
                         downloaded = f.length(),
                         total = f.length(),
                         status = DownloadStatus.Complete,

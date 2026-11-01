@@ -39,13 +39,24 @@ object HdrSupport {
 
     val isSupported: Boolean get() = displayHdr && (vp9Hdr || av1Hdr || hevcHdr)
 
+    /** True for a 10-bit HDR rendition, independent of whether this screen can show it. */
+    fun isHdrCodec(stream: VideoStream): Boolean {
+        val codec = stream.codec?.lowercase(Locale.US).orEmpty()
+        return when {
+            codec.contains("vp9.2") || codec.contains("vp09.02") -> true
+            codec.startsWith("av01") -> av1BitDepth(codec) >= 10
+            codec.startsWith("hev1") || codec.startsWith("hvc1") -> true
+            else -> false
+        }
+    }
+
     /** True only for an HDR rendition this device can actually decode and display. */
     fun isHdr(stream: VideoStream): Boolean {
-        if (!displayHdr) return false
+        if (!displayHdr || !isHdrCodec(stream)) return false
         val codec = stream.codec?.lowercase(Locale.US).orEmpty()
         return when {
             codec.contains("vp9.2") || codec.contains("vp09.02") -> vp9Hdr
-            codec.startsWith("av01") -> av1Hdr && av1BitDepth(codec) >= 10
+            codec.startsWith("av01") -> av1Hdr
             codec.startsWith("hev1") || codec.startsWith("hvc1") -> hevcHdr
             else -> false
         }
