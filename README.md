@@ -37,7 +37,7 @@ Version 2.1.0 · Android 7.0+ · one APK for phones, tablets and Android TV.
   </tr>
 </table>
 
-**Base:** [FlashTube](https://github.com/JustaThinker/FlashTube)
+## Base [FlashTube](https://github.com/JustaThinker/FlashTube)
 
 ## Build
 
