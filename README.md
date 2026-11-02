@@ -20,8 +20,6 @@ A lightweight YouTube and YouTube Music client with a modern Liquid Glass UI, ad
 
 Version 2.1.0 · Android 7.0+ · one APK for phones, tablets and Android TV.
 
-**Base:** [FlashTube](https://github.com/JustaThinker/FlashTube)
-
 ## Screenshots
 
 <table>
@@ -38,6 +36,8 @@ Version 2.1.0 · Android 7.0+ · one APK for phones, tablets and Android TV.
     <td align="center"><img src="docs/screenshots/08-settings.jpg" width="180" alt="Settings"><br><sub>Settings</sub></td>
   </tr>
 </table>
+
+**Base:** [FlashTube](https://github.com/JustaThinker/FlashTube)
 
 ## Build
 
