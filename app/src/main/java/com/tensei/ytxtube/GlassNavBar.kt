@@ -148,9 +148,10 @@ fun LiquidBottomTabs(
     backdrop: Backdrop,
     tabsCount: Int,
     modifier: Modifier = Modifier,
+    isDarkSurface: Boolean = false,
     content: @Composable RowScope.() -> Unit
 ) {
-    val isLightTheme = !isSystemInDarkTheme() && ThemeSettings.mode != "dark" && ThemeSettings.mode != "amoled"
+    val isLightTheme = !isDarkSurface && !isSystemInDarkTheme() && ThemeSettings.mode != "dark" && ThemeSettings.mode != "amoled"
     val isAmoled = ThemeSettings.mode == "amoled"
     val accentColor =
         if (isLightTheme) Color(0xFF0088FF)
@@ -403,6 +404,7 @@ fun LiquidBottomBar(
     backdrop: Backdrop,
     modifier: Modifier = Modifier,
     tabsCount: Int = Tab.entries.size,
+    isDarkSurface: Boolean = false,
     content: @Composable RowScope.() -> Unit,
 ) {
     LiquidBottomTabs(
@@ -411,13 +413,19 @@ fun LiquidBottomBar(
         backdrop = backdrop,
         tabsCount = tabsCount,
         modifier = modifier,
+        isDarkSurface = isDarkSurface,
         content = content
     )
 }
 
 @Composable
-fun RowScope.LiquidNavTab(tab: Tab, selected: Boolean, onClick: () -> Unit) {
-    val isLightTheme = !isSystemInDarkTheme() && ThemeSettings.mode != "dark" && ThemeSettings.mode != "amoled"
+fun RowScope.LiquidNavTab(
+    tab: Tab,
+    selected: Boolean,
+    isDarkSurface: Boolean = false,
+    onClick: () -> Unit
+) {
+    val isLightTheme = !isDarkSurface && !isSystemInDarkTheme() && ThemeSettings.mode != "dark" && ThemeSettings.mode != "amoled"
     val contentColor = if (isLightTheme) Color.Black else Color.White
     val active = tab == Tab.Downloads && Downloads.busy
 

@@ -54,6 +54,8 @@ import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.FastForward
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.material.icons.rounded.ThumbDown
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material.icons.rounded.VolumeOff
@@ -229,6 +231,7 @@ fun ShortsScreen(
     startItem: VideoItem? = null,
     active: Boolean = true,
     onOpenChannel: (String) -> Unit = {},
+    onCommentsOpenChange: (Boolean) -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -342,6 +345,7 @@ fun ShortsScreen(
     var subscribed by remember { mutableStateOf(false) }
     val comments = remember { CommentsState(scope) }
     var commentsOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(commentsOpen) { onCommentsOpenChange(commentsOpen) }
     var downloadOpen by remember { mutableStateOf(false) }
     var overlayWasPlaying by remember { mutableStateOf(false) }
     var scrubbing by remember { mutableStateOf(false) }
@@ -645,18 +649,63 @@ fun ShortsScreen(
                     }
                     }
 
+                    var is2xSpeed by remember { mutableStateOf(false) }
                     Box(
                         Modifier
                             .fillMaxSize()
-                            .clickable(
-                                interactionSource = remember { MutableInteractionSource() },
-                                indication = null,
-                            ) {
-                                if (index == page) {
-                                    togglePlayback()
-                                }
+                            .pointerInput(index == page) {
+                                if (index != page) return@pointerInput
+                                detectTapGestures(
+                                    onTap = { togglePlayback() },
+                                    onPress = {
+                                        var activated = false
+                                        val holdJob = scope.launch {
+                                            kotlinx.coroutines.delay(200)
+                                            activated = true
+                                            is2xSpeed = true
+                                            exo.setPlaybackSpeed(2.0f)
+                                        }
+                                        try {
+                                            tryAwaitRelease()
+                                        } finally {
+                                            holdJob.cancel()
+                                            if (activated) {
+                                                exo.setPlaybackSpeed(1.0f)
+                                                is2xSpeed = false
+                                            }
+                                        }
+                                    }
+                                )
                             },
                     )
+
+                    if (is2xSpeed && index == page) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.TopCenter)
+                                .padding(top = 70.dp)
+                                .clip(RoundedCornerShape(20.dp))
+                                .background(Color.Black.copy(alpha = 0.65f))
+                                .padding(horizontal = 14.dp, vertical = 7.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    Icons.Rounded.FastForward,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp),
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(
+                                    "2X Speed",
+                                    color = Color.White,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 12.5.sp,
+                                )
+                            }
+                        }
+                    }
 
                     if (index == page && playError == null && (loading || (buffering && exo.playWhenReady))) {
                         CircularProgressIndicator(
@@ -923,7 +972,7 @@ fun ShortsScreen(
                 )
                 Spacer(Modifier.width(9.dp))
                 Text(
-                    "Finding new Shorts…",
+                    I18n.t("finding_shorts", "Finding new Shorts…"),
                     color = Color.White,
                     fontSize = 12.5.sp,
                     fontWeight = FontWeight.SemiBold,
@@ -1016,7 +1065,7 @@ private fun ShortsCircleButton(
 ) {
     Box(
         Modifier
-            .size(40.dp)
+            .size(32.dp)
             .pressable(enabled = enabled, onClick = onClick)
             .clip(CircleShape)
             .liquidGlass(backdrop, glass),
@@ -1024,12 +1073,12 @@ private fun ShortsCircleButton(
     ) {
         if (loading) {
             CircularProgressIndicator(
-                modifier = Modifier.size(19.dp),
+                modifier = Modifier.size(15.dp),
                 color = Color.White,
                 strokeWidth = 2.dp,
             )
         } else {
-            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(21.dp))
+            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(16.dp))
         }
     }
 }
@@ -1054,11 +1103,11 @@ private fun ShortsRail(
     Column(
         modifier = modifier,
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(10.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         ShortsAction(
             icon = Icons.Rounded.ThumbUp,
-            label = countLabel(likeCount, "Like"),
+            label = countLabel(likeCount, I18n.t("like", "Like")),
             tint = if (liked) Color(0xFFFF2D55) else Color.White,
             active = liked,
             backdrop = backdrop,
@@ -1067,16 +1116,16 @@ private fun ShortsRail(
         )
         ShortsAction(
             icon = Icons.Rounded.ThumbDown,
-            label = countLabel(dislikes, "Dislike"),
+            label = countLabel(dislikes, I18n.t("dislike", "Dislike")),
             tint = if (disliked) Color(0xFFFF2D55) else Color.White,
             active = disliked,
             backdrop = backdrop,
             glass = glass,
             onClick = onDislike,
         )
-        ShortsAction(Icons.Rounded.Comment, "Comments", backdrop = backdrop, glass = glass, onClick = onComments)
-        ShortsAction(Icons.Rounded.Download, "Download", backdrop = backdrop, glass = glass, onClick = onDownload)
-        ShortsAction(Icons.Rounded.Share, "Share", backdrop = backdrop, glass = glass, onClick = onShare)
+        ShortsAction(Icons.Rounded.Comment, I18n.t("comments", "Comments"), backdrop = backdrop, glass = glass, onClick = onComments)
+        ShortsAction(Icons.Rounded.Download, I18n.t("download", "Download"), backdrop = backdrop, glass = glass, onClick = onDownload)
+        ShortsAction(Icons.Rounded.Share, I18n.t("share", "Share"), backdrop = backdrop, glass = glass, onClick = onShare)
     }
 }
 
@@ -1098,7 +1147,7 @@ private fun ShortsAction(
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         Box(
             Modifier
-                .size(46.dp)
+                .size(38.dp)
                 .graphicsLayer {
                     scaleX = scale
                     scaleY = scale
@@ -1108,13 +1157,13 @@ private fun ShortsAction(
                 .liquidGlass(backdrop, glass),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(25.dp))
+            Icon(icon, contentDescription = label, tint = tint, modifier = Modifier.size(20.dp))
         }
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(3.dp))
         Text(
             label,
             color = Color.White,
-            fontSize = 10.5.sp,
+            fontSize = 10.sp,
             fontWeight = FontWeight.SemiBold,
             maxLines = 1,
         )
@@ -1161,7 +1210,7 @@ private fun ShortsDetails(
                         .pressable(onClick = onSubscribe)
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                 ) {
-                    Text("Subscribe", color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(I18n.t("subscribe", "Subscribe"), color = Color.Black, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             } else {
                 Spacer(Modifier.width(10.dp))
@@ -1172,7 +1221,7 @@ private fun ShortsDetails(
                         .pressable(onClick = onSubscribe)
                         .padding(horizontal = 12.dp, vertical = 6.dp),
                 ) {
-                    Text("Subscribed", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text(I18n.t("subscribed", "Subscribed"), color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 }
             }
         }

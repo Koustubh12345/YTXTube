@@ -80,6 +80,13 @@ import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.Storage
 import androidx.compose.material.icons.rounded.SystemUpdate
 import androidx.compose.material.icons.rounded.Tune
+import androidx.compose.material.icons.rounded.Translate
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -150,7 +157,7 @@ fun SettingsScreen(
         ) {
             BackScreenHeader(onBack = onBack) {
                 Text(
-                    text = "Settings",
+                    text = I18n.t("settings", "Settings"),
                     fontFamily = RoundedHeavy,
                     fontWeight = FontWeight.Bold,
                     fontSize = 22.sp,
@@ -175,41 +182,51 @@ fun SettingsScreen(
                     onAccountSwitched = onAccountSwitched,
                 )
 
-                SettingsSectionHeader("Customization")
+                SettingsSectionHeader(I18n.t("customization", "Customization"))
                 SettingsCard {
                     SettingsRow(
                         icon = Icons.Rounded.Palette,
-                        title = "Appearance & Theme",
-                        subtitle = "Theme mode, color palette and UI style",
+                        title = I18n.t("appearance_theme", "Appearance & Theme"),
+                        subtitle = I18n.t("appearance_sub", "Theme mode, color palette and UI style"),
                         onClick = { activeFloatingSection = SettingsFloatingSection.APPEARANCE },
                     )
                 }
 
-                SettingsSectionHeader("Player & Interface")
+                SettingsSectionHeader(I18n.t("player_interface", "Player & Interface"))
                 SettingsCard {
                     SettingsRow(
                         icon = Icons.Rounded.Tune,
-                        title = "General Modification",
-                        subtitle = "Font, gestures, quality & downloads",
+                        title = I18n.t("general_modification", "General Modification"),
+                        subtitle = I18n.t("general_modification_sub", "Font, gestures, quality & downloads"),
                         onClick = { activeFloatingSection = SettingsFloatingSection.GENERAL_MODS },
                     )
                 }
 
-                SettingsSectionHeader("Data & Storage")
+                SettingsSectionHeader(I18n.t("language_section", "Language"))
+                SettingsCard {
+                    SettingsRow(
+                        icon = Icons.Rounded.Translate,
+                        title = I18n.t("language", "Language"),
+                        subtitle = LanguageSettings.currentDisplay(),
+                        onClick = { activeFloatingSection = SettingsFloatingSection.LANGUAGE },
+                    )
+                }
+
+                SettingsSectionHeader(I18n.t("data_storage", "Data & Storage"))
                 SettingsCard {
                     SettingsRow(
                         icon = Icons.Rounded.DataUsage,
-                        title = "Storage Usage",
-                        subtitle = "See phone storage & clear YTXTube cache",
+                        title = I18n.t("storage_usage", "Storage Usage"),
+                        subtitle = I18n.t("storage_sub", "See phone storage & clear YTXTube cache"),
                         onClick = { activeFloatingSection = SettingsFloatingSection.STORAGE_USAGE },
                     )
                 }
 
-                SettingsSectionHeader("About")
+                SettingsSectionHeader(I18n.t("about", "About"))
                 SettingsCard {
                     SettingsRow(
                         icon = Icons.Rounded.Info,
-                        title = "Version",
+                        title = I18n.t("version", "Version"),
                         subtitle = "YTXTube ${BuildConfig.VERSION_NAME}",
                         trailing = {
                             Box(
@@ -228,7 +245,7 @@ fun SettingsScreen(
                                     )
                                     Spacer(Modifier.width(5.dp))
                                     Text(
-                                        text = "Up to date",
+                                        text = I18n.t("up_to_date", "Up to date"),
                                         color = Color(0xFF2ECC71),
                                         fontWeight = FontWeight.SemiBold,
                                         fontSize = 11.sp,
@@ -239,8 +256,8 @@ fun SettingsScreen(
                     )
                     SettingsRow(
                         icon = Icons.Rounded.FileDownload,
-                        title = "Check for updates",
-                        subtitle = "New GitHub releases install from inside the app",
+                        title = I18n.t("check_updates", "Check for updates"),
+                        subtitle = I18n.t("check_updates_sub", "New GitHub releases install from inside the app"),
                         onClick = {
                             if (checkingUpdate) return@SettingsRow
                             checkingUpdate = true
@@ -263,8 +280,8 @@ fun SettingsScreen(
                     val ytxRepo = "https://github.com/Koustubh12345/YTXTube"
                     SettingsRow(
                         icon = Icons.Rounded.Code,
-                        title = "Open Source",
-                        subtitle = "View source code on GitHub",
+                        title = I18n.t("open_source", "Open Source"),
+                        subtitle = I18n.t("open_source_sub", "View source code on GitHub"),
                         onClick = { openRepo(ytxRepo) },
                     )
                     val telegram = "https://t.me/getthefckoutofheree"
@@ -276,7 +293,7 @@ fun SettingsScreen(
                     }
                     SettingsRow(
                         icon = Icons.Rounded.Person,
-                        title = "Developer",
+                        title = I18n.t("developer", "Developer"),
                         subtitle = "@getthefckoutofheree",
                         onClick = openTelegram,
                     )
@@ -303,8 +320,8 @@ fun SettingsScreen(
             when (section) {
                 SettingsFloatingSection.APPEARANCE -> {
                     SettingsFloatingDialog(
-                        title = "Appearance & Theme",
-                        subtitle = "Theme mode, color palette & UI style",
+                        title = I18n.t("appearance_theme", "Appearance & Theme"),
+                        subtitle = I18n.t("appearance_sub", "Theme mode, color palette & UI style"),
                         onDismiss = { activeFloatingSection = null },
                     ) {
                         AppearanceThemeContent(context = context)
@@ -312,8 +329,8 @@ fun SettingsScreen(
                 }
                 SettingsFloatingSection.GENERAL_MODS -> {
                     SettingsFloatingDialog(
-                        title = "General Modification",
-                        subtitle = "Font, gestures, quality & downloads",
+                        title = I18n.t("general_modification", "General Modification"),
+                        subtitle = I18n.t("general_modification_sub", "Font, gestures, quality & downloads"),
                         onDismiss = { activeFloatingSection = null },
                     ) {
                         GeneralModificationContent(context = context)
@@ -321,12 +338,23 @@ fun SettingsScreen(
                 }
                 SettingsFloatingSection.STORAGE_USAGE -> {
                     SettingsFloatingDialog(
-                        title = "Storage Usage",
-                        subtitle = "Device memory & YTXTube data",
+                        title = I18n.t("storage_usage", "Storage Usage"),
+                        subtitle = I18n.t("storage_sub", "Device memory & YTXTube data"),
                         onDismiss = { activeFloatingSection = null },
                     ) {
                         StorageUsageContent(context = context) {
-                            cacheMessage = "Cache cleared successfully"
+                            cacheMessage = I18n.t("cache_cleared", "Cache cleared successfully")
+                        }
+                    }
+                }
+                SettingsFloatingSection.LANGUAGE -> {
+                    SettingsFloatingDialog(
+                        title = I18n.t("language", "Language"),
+                        subtitle = I18n.t("language_sub", "Choose application language"),
+                        onDismiss = { activeFloatingSection = null },
+                    ) {
+                        LanguageContent(context = context) {
+                            activeFloatingSection = null
                         }
                     }
                 }
@@ -534,6 +562,7 @@ private enum class SettingsFloatingSection {
     APPEARANCE,
     GENERAL_MODS,
     STORAGE_USAGE,
+    LANGUAGE,
 }
 
 @Composable
@@ -739,11 +768,11 @@ private fun AppearanceThemeContent(context: Context) {
             .padding(vertical = 4.dp)
     ) {
         SettingsSwitchRow(
-            title = "Liquid Glass",
+            title = I18n.t("liquid_glass", "Liquid Glass"),
             subtitle = if (GlassSettings.enabled) {
-                "Frosted, see-through surfaces with depth and blur"
+                I18n.t("liquid_glass_sub_on", "Frosted, see-through surfaces with depth and blur")
             } else {
-                "Using solid Material surfaces with no transparency"
+                I18n.t("liquid_glass_sub_off", "Using solid Material surfaces with no transparency")
             },
             checked = GlassSettings.enabled,
             onCheckedChange = { GlassSettings.updateEnabled(it) },
@@ -758,8 +787,8 @@ private fun AppearanceThemeContent(context: Context) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Theme mode", fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                    Text("Choose how the app looks", color = c.onSurfaceVariant, fontSize = 12.sp)
+                    Text(I18n.t("theme_mode", "Theme mode"), fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                    Text(I18n.t("theme_mode_sub", "Choose how the app looks"), color = c.onSurfaceVariant, fontSize = 12.sp)
                 }
             }
             Spacer(Modifier.height(10.dp))
@@ -768,10 +797,10 @@ private fun AppearanceThemeContent(context: Context) {
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
             listOf(
-                "system" to "System",
-                "dark" to "Dark",
-                "light" to "Light",
-                "amoled" to "AMOLED",
+                "system" to I18n.t("theme_system", "System"),
+                "dark" to I18n.t("theme_dark", "Dark"),
+                "light" to I18n.t("theme_light", "Light"),
+                "amoled" to I18n.t("theme_amoled", "AMOLED"),
             ).forEach { (mode, label) ->
                 val on = ThemeSettings.mode == mode
                 Box(
@@ -803,15 +832,15 @@ private fun AppearanceThemeContent(context: Context) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
-                    Text("Color palette", fontWeight = FontWeight.Medium, fontSize = 14.sp)
-                    Text("Choose an accent for the app", color = c.onSurfaceVariant, fontSize = 12.sp)
+                    Text(I18n.t("color_palette", "Color palette"), fontWeight = FontWeight.Medium, fontSize = 14.sp)
+                    Text(I18n.t("color_palette_sub", "Choose an accent for the app"), color = c.onSurfaceVariant, fontSize = 12.sp)
                 }
             }
             Spacer(Modifier.height(12.dp))
 
             val dark = isDarkTheme()
             val choices = buildList {
-                if (ThemeSettings.wallpaperAvailable) add(null to "Wallpaper")
+                if (ThemeSettings.wallpaperAvailable) add(null to I18n.t("wallpaper_accent", "Wallpaper"))
                 YTX_THEMES.forEach { add(it.hex to it.name) }
             }
 
@@ -949,7 +978,7 @@ private fun QualitySelectionDialog(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Select default playback quality",
+                    text = I18n.t("select_quality_sub", "Select default playback quality"),
                     fontSize = 12.sp,
                     color = c.onSurfaceVariant,
                 )
@@ -972,14 +1001,14 @@ private fun QualitySelectionDialog(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = mode.label,
+                                text = mode.displayLabel,
                                 fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                                 fontSize = 14.sp,
                                 color = if (selected) c.primary else c.onSurface,
                             )
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                text = mode.subtitle,
+                                text = mode.displaySubtitle,
                                 fontSize = 11.5.sp,
                                 color = c.onSurfaceVariant,
                             )
@@ -1007,7 +1036,7 @@ private fun QualitySelectionDialog(
                 HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 10.dp))
 
                 Text(
-                    text = "Or lock to specific resolution",
+                    text = I18n.t("lock_resolution", "Or lock to specific resolution"),
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.sp,
                     color = c.primary,
@@ -1060,7 +1089,7 @@ private fun QualitySelectionDialog(
                             .pressable(onClick = onDismiss)
                             .padding(horizontal = 14.dp, vertical = 8.dp),
                     ) {
-                        Text("Cancel", color = c.primary, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                        Text(I18n.t("cancel", "Cancel"), color = c.primary, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
                     }
                 }
             }
@@ -1087,7 +1116,7 @@ private fun DownloadFolderSelectionDialog(
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
                 Text(
-                    text = "Download Location",
+                    text = I18n.t("download_location", "Download Location"),
                     fontFamily = RoundedHeavy,
                     fontWeight = FontWeight.Bold,
                     fontSize = 18.sp,
@@ -1130,7 +1159,7 @@ private fun DownloadFolderSelectionDialog(
                             color = if (isDefault) c.primary else c.onSurface,
                         )
                         Text(
-                            text = "Default public Downloads directory",
+                            text = I18n.t("default_dir_sub", "Default public Downloads directory"),
                             fontSize = 11.sp,
                             color = c.onSurfaceVariant,
                         )
@@ -1168,7 +1197,7 @@ private fun DownloadFolderSelectionDialog(
                             color = if (isMusic) c.primary else c.onSurface,
                         )
                         Text(
-                            text = "Dedicated Music directory",
+                            text = I18n.t("music_dir_sub", "Dedicated Music directory"),
                             fontSize = 11.sp,
                             color = c.onSurfaceVariant,
                         )
@@ -1199,13 +1228,13 @@ private fun DownloadFolderSelectionDialog(
                     Spacer(Modifier.width(12.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "Choose Custom Folder...",
+                            text = I18n.t("choose_custom_folder", "Choose Custom Folder..."),
                             fontWeight = if (isCustom) FontWeight.SemiBold else FontWeight.Medium,
                             fontSize = 13.sp,
                             color = if (isCustom) c.primary else c.onSurface,
                         )
                         Text(
-                            text = if (isCustom) currentPath else "Select any directory on device",
+                            text = if (isCustom) currentPath else I18n.t("custom_dir_sub", "Select any directory on device"),
                             fontSize = 11.sp,
                             color = c.onSurfaceVariant,
                             maxLines = 1,
@@ -1225,7 +1254,7 @@ private fun DownloadFolderSelectionDialog(
                             .pressable(onClick = onDismiss)
                             .padding(horizontal = 14.dp, vertical = 8.dp),
                     ) {
-                        Text("Close", color = c.primary, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
+                        Text(I18n.t("close", "Close"), color = c.primary, fontWeight = FontWeight.SemiBold, fontSize = 13.5.sp)
                     }
                 }
             }
@@ -1256,8 +1285,8 @@ private fun GeneralModificationContent(context: Context) {
 
     Column(modifier = Modifier.fillMaxWidth()) {
         SettingsSwitchRow(
-            title = "Use System Font",
-            subtitle = "Use device default font throughout the app",
+            title = I18n.t("use_system_font", "Use System Font"),
+            subtitle = I18n.t("use_system_font_sub", "Use device default font throughout the app"),
             checked = ThemeSettings.useSystemFont,
             onCheckedChange = { ThemeSettings.updateUseSystemFont(it) },
         )
@@ -1265,25 +1294,52 @@ private fun GeneralModificationContent(context: Context) {
         HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
 
         SettingsSwitchRow(
-            title = "Video gestures",
-            subtitle = "Swipe vertically on the left for brightness, right for volume",
+            title = I18n.t("video_gestures", "Video gestures"),
+            subtitle = I18n.t("video_gestures_sub", "Swipe vertically on the left for brightness, right for volume"),
             checked = VideoGestureSettings.enabled,
             onCheckedChange = { VideoGestureSettings.set(it) },
         )
 
         HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
 
+        SettingsSwitchRow(
+            title = I18n.t("quick_player_controls", "Player speed & quality buttons"),
+            subtitle = I18n.t("quick_player_controls_sub", "Show quick speed and quality icons next to fullscreen button"),
+            checked = PlayerControlSettings.showQuickControls,
+            onCheckedChange = { PlayerControlSettings.set(it) },
+        )
+
+        HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
+
+        SettingsSwitchRow(
+            title = I18n.t("enable_pip", "Picture-in-Picture (PiP)"),
+            subtitle = I18n.t("enable_pip_sub", "Allow video to keep playing in a floating window when leaving the app"),
+            checked = PipSettings.enabled,
+            onCheckedChange = { PipSettings.set(it) },
+        )
+
+        HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
+
+        SettingsSwitchRow(
+            title = I18n.t("enable_liquid_mini_player", "Enable Liquid Mini Player"),
+            subtitle = I18n.t("enable_liquid_mini_player_sub", "Use classic bottom bar miniplayer instead of floating draggable player"),
+            checked = MiniPlayerSettings.useLiquidMiniPlayer,
+            onCheckedChange = { MiniPlayerSettings.set(it) },
+        )
+
+        HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
+
         Spacer(Modifier.height(8.dp))
         Text(
-            text = "SponsorBlock",
+            text = I18n.t("sponsorblock", "SponsorBlock"),
             fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp,
             color = c.onSurface,
         )
         Spacer(Modifier.height(1.dp))
         SettingsSwitchRow(
-            title = "Automatically skip segments",
-            subtitle = "Choose what happens for each type",
+            title = I18n.t("auto_skip_segments", "Automatically skip segments"),
+            subtitle = I18n.t("auto_skip_sub", "Choose what happens for each type"),
             checked = SponsorBlock.enabled,
             onCheckedChange = SponsorBlock::updateEnabled,
         )
@@ -1307,7 +1363,7 @@ private fun GeneralModificationContent(context: Context) {
                                 .background(category.color)
                         )
                         Column(Modifier.weight(1f)) {
-                            Text(category.label, fontWeight = FontWeight.Medium, fontSize = 12.sp, maxLines = 2)
+                            Text(category.displayLabel, fontWeight = FontWeight.Medium, fontSize = 12.sp, maxLines = 2)
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(3.dp)) {
                             SponsorBlock.Action.entries.forEach { action ->
@@ -1320,7 +1376,7 @@ private fun GeneralModificationContent(context: Context) {
                                         .padding(horizontal = 6.dp, vertical = 6.dp),
                                 ) {
                                     Text(
-                                        action.label,
+                                        action.displayLabel,
                                         color = if (on) c.onSecondaryContainer else c.onSurfaceVariant,
                                         fontWeight = if (on) FontWeight.SemiBold else FontWeight.Normal,
                                         fontSize = 10.sp
@@ -1336,7 +1392,7 @@ private fun GeneralModificationContent(context: Context) {
         HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 8.dp))
 
         Text(
-            text = "Quality",
+            text = I18n.t("quality", "Quality"),
             fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp,
             color = c.onSurface,
@@ -1344,7 +1400,7 @@ private fun GeneralModificationContent(context: Context) {
         Spacer(Modifier.height(2.dp))
 
         SettingsClickRow(
-            title = "Video Quality",
+            title = I18n.t("video_quality", "Video Quality"),
             subtitle = QualityPreference.videoQualityDisplay,
             onClick = { showVideoQualityDialog = true },
         )
@@ -1352,7 +1408,7 @@ private fun GeneralModificationContent(context: Context) {
         HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f))
 
         SettingsClickRow(
-            title = "Shorts Quality",
+            title = I18n.t("shorts_quality", "Shorts Quality"),
             subtitle = QualityPreference.shortsQualityDisplay,
             onClick = { showShortsQualityDialog = true },
         )
@@ -1360,7 +1416,7 @@ private fun GeneralModificationContent(context: Context) {
         HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 8.dp))
 
         Text(
-            text = "Downloads",
+            text = I18n.t("downloads", "Downloads"),
             fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp,
             color = c.onSurface,
@@ -1369,7 +1425,7 @@ private fun GeneralModificationContent(context: Context) {
 
         val currentPath = Downloads.currentDownloadDir.absolutePath
         SettingsClickRow(
-            title = "Select Download folder",
+            title = I18n.t("select_download_folder", "Select Download folder"),
             subtitle = currentPath,
             onClick = { showFolderDialog = true },
         )
@@ -1377,7 +1433,7 @@ private fun GeneralModificationContent(context: Context) {
 
     if (showVideoQualityDialog) {
         QualitySelectionDialog(
-            title = "Video Quality",
+            title = I18n.t("video_quality", "Video Quality"),
             currentMode = QualityPreference.videoQualityMode,
             currentSpecificHeight = QualityPreference.specificVideoHeight,
             onSelectMode = {
@@ -1394,7 +1450,7 @@ private fun GeneralModificationContent(context: Context) {
 
     if (showShortsQualityDialog) {
         QualitySelectionDialog(
-            title = "Shorts Quality",
+            title = I18n.t("shorts_quality", "Shorts Quality"),
             currentMode = QualityPreference.shortsQualityMode,
             currentSpecificHeight = QualityPreference.specificShortsHeight,
             onSelectMode = {
@@ -1466,6 +1522,29 @@ private fun formatStorageBytes(bytes: Long): String {
     }
 }
 
+private var cachedStorageData: StorageData? = null
+
+private fun fastStorageData(): StorageData {
+    return runCatching {
+        val stat = StatFs(Environment.getDataDirectory().path)
+        val total = stat.totalBytes
+        val free = stat.availableBytes
+        val used = (total - free).coerceAtLeast(0L)
+        StorageData(
+            deviceTotal = total,
+            deviceUsed = used,
+            deviceFree = free,
+            ytxApp = cachedStorageData?.ytxApp ?: 18_000_000L,
+            ytxCache = cachedStorageData?.ytxCache ?: 0L,
+            ytxDownloads = cachedStorageData?.ytxDownloads ?: 0L,
+            ytxData = cachedStorageData?.ytxData ?: 0L,
+            ytxTotal = cachedStorageData?.ytxTotal ?: 18_000_000L,
+        )
+    }.getOrDefault(
+        cachedStorageData ?: StorageData(128_000_000_000L, 45_000_000_000L, 83_000_000_000L, 18_000_000L, 0L, 0L, 0L, 18_000_000L)
+    )
+}
+
 private fun calculateStorageData(context: Context): StorageData {
     return runCatching {
         val stat = StatFs(Environment.getDataDirectory().path)
@@ -1496,14 +1575,20 @@ private fun calculateStorageData(context: Context): StorageData {
 @Composable
 private fun StorageUsageContent(context: Context, onCacheCleared: () -> Unit) {
     val c = MaterialTheme.colorScheme
-    var storageData by remember { mutableStateOf(calculateStorageData(context)) }
+    val scope = rememberCoroutineScope()
+    var storageData by remember { mutableStateOf(cachedStorageData ?: fastStorageData()) }
+    var isCalculating by remember { mutableStateOf(cachedStorageData == null) }
+    var isClearing by remember { mutableStateOf(false) }
     var clearedNotice by remember { mutableStateOf<String?>(null) }
 
-    // Continuously monitor and refresh storage in real-time as background tasks or downloads run
     LaunchedEffect(Unit) {
-        while (true) {
-            delay(1500)
-            storageData = calculateStorageData(context)
+        withContext(Dispatchers.IO) {
+            val fresh = calculateStorageData(context)
+            cachedStorageData = fresh
+            withContext(Dispatchers.Main) {
+                storageData = fresh
+                isCalculating = false
+            }
         }
     }
 
@@ -1514,7 +1599,7 @@ private fun StorageUsageContent(context: Context, onCacheCleared: () -> Unit) {
 
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
         Text(
-            text = "Device storage",
+            text = I18n.t("device_storage", "Device storage"),
             fontWeight = FontWeight.SemiBold,
             fontSize = 14.sp,
             color = c.onSurface,
@@ -1561,13 +1646,13 @@ private fun StorageUsageContent(context: Context, onCacheCleared: () -> Unit) {
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
             Text(
-                text = "${"%.1f".format(usedGb)} GB used of ${"%.1f".format(totalGb)} GB",
+                text = "${"%.1f".format(usedGb)} GB ${I18n.t("used_of", "used of")} ${"%.1f".format(totalGb)} GB",
                 fontSize = 11.5.sp,
                 fontWeight = FontWeight.Medium,
                 color = c.onSurface,
             )
             Text(
-                text = "${"%.1f".format(freeGb)} GB free",
+                text = "${"%.1f".format(freeGb)} GB ${I18n.t("free", "free")}",
                 fontSize = 11.5.sp,
                 color = c.onSurfaceVariant,
             )
@@ -1575,15 +1660,26 @@ private fun StorageUsageContent(context: Context, onCacheCleared: () -> Unit) {
 
         HorizontalDivider(color = c.onSurface.copy(alpha = 0.08f), modifier = Modifier.padding(vertical = 12.dp))
 
-        Text(
-            text = "Used by YTXTube",
-            fontWeight = FontWeight.SemiBold,
-            fontSize = 14.sp,
-            color = c.onSurface,
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = I18n.t("used_by_ytxtube", "Used by YTXTube"),
+                fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                color = c.onSurface,
+                modifier = Modifier.weight(1f),
+            )
+            if (isCalculating) {
+                CircularProgressIndicator(
+                    color = c.primary,
+                    strokeWidth = 2.dp,
+                    modifier = Modifier.size(13.dp)
+                )
+                Spacer(Modifier.width(6.dp))
+            }
+        }
         Spacer(Modifier.height(2.dp))
         Text(
-            text = "Total space: ${formatStorageBytes(storageData.ytxTotal)}",
+            text = "${I18n.t("total_space", "Total space")}: ${if (isCalculating && storageData.ytxTotal <= 18_000_000L) "..." else formatStorageBytes(storageData.ytxTotal)}",
             fontSize = 12.sp,
             color = c.primary,
             fontWeight = FontWeight.SemiBold,
@@ -1591,10 +1687,10 @@ private fun StorageUsageContent(context: Context, onCacheCleared: () -> Unit) {
 
         Spacer(Modifier.height(10.dp))
 
-        StorageItemRow(label = "App & Core engine", sizeStr = formatStorageBytes(storageData.ytxApp))
-        StorageItemRow(label = "Stream & video cache", sizeStr = formatStorageBytes(storageData.ytxCache))
-        StorageItemRow(label = "Downloaded videos & music", sizeStr = formatStorageBytes(storageData.ytxDownloads))
-        StorageItemRow(label = "Saved offline data & config", sizeStr = formatStorageBytes(storageData.ytxData))
+        StorageItemRow(label = I18n.t("app_core_engine", "App & Core engine"), sizeStr = formatStorageBytes(storageData.ytxApp))
+        StorageItemRow(label = I18n.t("stream_video_cache", "Stream & video cache"), sizeStr = if (isCalculating && storageData.ytxCache == 0L) "..." else formatStorageBytes(storageData.ytxCache))
+        StorageItemRow(label = I18n.t("downloaded_media", "Downloaded videos & music"), sizeStr = if (isCalculating && storageData.ytxDownloads == 0L) "..." else formatStorageBytes(storageData.ytxDownloads))
+        StorageItemRow(label = I18n.t("saved_offline_data", "Saved offline data & config"), sizeStr = if (isCalculating && storageData.ytxData == 0L) "..." else formatStorageBytes(storageData.ytxData))
 
         Spacer(Modifier.height(14.dp))
 
@@ -1603,30 +1699,48 @@ private fun StorageUsageContent(context: Context, onCacheCleared: () -> Unit) {
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(12.dp))
                 .background(Color(0xFF2E1517))
-                .pressable {
-                    StreamCache.invalidateAll()
-                    Downloads.deleteAllDownloadsAndWork()
-                    runCatching {
-                        context.cacheDir.deleteRecursively()
-                        context.externalCacheDir?.deleteRecursively()
+                .pressable(enabled = !isClearing) {
+                    isClearing = true
+                    scope.launch {
+                        withContext(Dispatchers.IO) {
+                            StreamCache.invalidateAll()
+                            Downloads.deleteAllDownloadsAndWork()
+                            runCatching {
+                                context.cacheDir.deleteRecursively()
+                                context.externalCacheDir?.deleteRecursively()
+                            }
+                            val fresh = calculateStorageData(context)
+                            cachedStorageData = fresh
+                            withContext(Dispatchers.Main) {
+                                storageData = fresh
+                                isClearing = false
+                                clearedNotice = I18n.t("cache_cleared_notice", "Cache & downloads cleared!")
+                                onCacheCleared()
+                            }
+                        }
                     }
-                    storageData = calculateStorageData(context)
-                    clearedNotice = "Cache & downloads cleared!"
-                    onCacheCleared()
                 }
                 .padding(vertical = 9.dp),
             contentAlignment = Alignment.Center,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Rounded.Delete,
-                    contentDescription = null,
-                    tint = Color(0xFFEF5350),
-                    modifier = Modifier.size(15.dp),
-                )
+                if (isClearing) {
+                    CircularProgressIndicator(
+                        color = Color(0xFFEF5350),
+                        strokeWidth = 2.dp,
+                        modifier = Modifier.size(15.dp)
+                    )
+                } else {
+                    Icon(
+                        Icons.Rounded.Delete,
+                        contentDescription = null,
+                        tint = Color(0xFFEF5350),
+                        modifier = Modifier.size(15.dp),
+                    )
+                }
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = clearedNotice ?: "Clear YTXTube Cache & Downloads",
+                    text = clearedNotice ?: I18n.t("clear_cache_downloads", "Clear YTXTube Cache & Downloads"),
                     color = Color(0xFFEF5350),
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 12.5.sp,
@@ -1648,6 +1762,137 @@ private fun StorageItemRow(label: String, sizeStr: String) {
     ) {
         Text(label, fontSize = 12.sp, color = c.onSurfaceVariant)
         Text(sizeStr, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = c.onSurface)
+    }
+}
+
+@Composable
+private fun LanguageContent(context: Context, onLanguageSelected: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    var searchQuery by remember { mutableStateOf("") }
+    val currentCode = LanguageSettings.currentCode
+    val filteredLanguages = remember(searchQuery) {
+        if (searchQuery.isBlank()) {
+            LanguageSettings.ALL_LANGUAGES
+        } else {
+            LanguageSettings.ALL_LANGUAGES.filter {
+                it.name.contains(searchQuery, ignoreCase = true) ||
+                it.nativeName.contains(searchQuery, ignoreCase = true) ||
+                it.code.contains(searchQuery, ignoreCase = true)
+            }
+        }
+    }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .background(c.surfaceContainerLow)
+                .border(1.dp, c.onSurface.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                Icons.Rounded.Search,
+                contentDescription = "Search",
+                tint = c.onSurfaceVariant.copy(alpha = 0.7f),
+                modifier = Modifier.size(18.dp),
+            )
+            Spacer(Modifier.width(8.dp))
+            BasicTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                textStyle = TextStyle(
+                    color = c.onSurface,
+                    fontSize = 13.5.sp,
+                    fontWeight = FontWeight.Medium,
+                ),
+                cursorBrush = SolidColor(c.primary),
+                singleLine = true,
+                modifier = Modifier.weight(1f),
+                decorationBox = { innerTextField ->
+                    if (searchQuery.isEmpty()) {
+                        Text(
+                            text = I18n.t("search_languages", "Search languages..."),
+                            color = c.onSurfaceVariant.copy(alpha = 0.5f),
+                            fontSize = 13.5.sp,
+                        )
+                    }
+                    innerTextField()
+                }
+            )
+            if (searchQuery.isNotEmpty()) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = "Clear",
+                    tint = c.onSurfaceVariant,
+                    modifier = Modifier
+                        .size(16.dp)
+                        .clickable { searchQuery = "" },
+                )
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+
+        LazyColumn(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 380.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            items(filteredLanguages, key = { it.code }) { item ->
+                val isSelected = currentCode.equals(item.code, ignoreCase = true)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (isSelected) c.primary.copy(alpha = 0.14f) else c.surfaceContainerLow.copy(alpha = 0.5f))
+                        .border(
+                            width = 1.dp,
+                            color = if (isSelected) c.primary.copy(alpha = 0.5f) else Color.Transparent,
+                            shape = RoundedCornerShape(14.dp)
+                        )
+                        .clickable {
+                            LanguageSettings.choose(context, item.code)
+                            onLanguageSelected()
+                        }
+                        .padding(horizontal = 14.dp, vertical = 11.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = item.nativeName,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.SemiBold,
+                            fontSize = 14.sp,
+                            color = if (isSelected) c.primary else c.onSurface,
+                        )
+                        Text(
+                            text = if (item.code == "auto") I18n.t("follow_system", "Follow device language") else item.name,
+                            fontSize = 11.5.sp,
+                            color = c.onSurfaceVariant.copy(alpha = 0.75f),
+                        )
+                    }
+                    if (isSelected) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(c.primary),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Rounded.Check,
+                                contentDescription = "Selected",
+                                tint = c.onPrimary,
+                                modifier = Modifier.size(15.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

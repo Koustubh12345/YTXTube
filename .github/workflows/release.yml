@@ -1,0 +1,70 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Grant Execute Permission for Gradlew
+        run: chmod +x gradlew
+
+      - name: Build Release APK
+        run: ./gradlew :app:assembleRelease --stacktrace
+
+      - name: Prepare APK Artifact
+        run: cp app/build/outputs/apk/release/app-release.apk YTXTube.apk
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: YTXTube
+          path: YTXTube.apk
+
+      - name: Set Release Title
+        id: release_title
+        if: startsWith(github.ref, 'refs/tags/')
+        run: echo "title=YTXTube ${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ steps.release_title.outputs.title }}
+          files: YTXTube.apk
+          body: |
+            • Added multiple languages support.
+            • Fixed shorts icons & bottom bar.
+            • Fixed status bar color change.
+            • Added a few Switches in General settings.
+            • Added Youtube Like mini player.
+            • Fixed minor issues.
+            • Improved download engine with continuous streaming and resume support.
+
+            ### Release Signature Fingerprints
+            - **SHA-256**: `F9:66:5D:A8:D8:43:0E:AD:62:8E:CC:F8:AC:F5:54:F3:15:F7:36:61:BD:92:D0:F5:B9:66:4B:EA:45:E5:16:82`
+            - **SHA-1**: `EE:B5:AA:A3:22:4C:0A:3D:76:F9:AE:F4:E8:FD:F8:BD:8F:BB:08:11`
+            - **Alias**: `ytxtube`
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -97,7 +97,7 @@ object CommentFeed {
             avatar = author?.optString("avatarThumbnailUrl")?.ifBlank { null }?.let { if (it.startsWith("//")) "https:$it" else it },
             text = props.optJSONObject("content")?.optString("content").orEmpty().trim(),
             likes = toolbar?.optString("likeCountNotliked")?.let { InnerTube.parseViews(it) }?.takeIf { it > 0 }?.toInt() ?: 0,
-            ago = props.optString("publishedTime").ifBlank { null },
+            ago = props.optString("publishedTime").ifBlank { null }?.let { I18n.translateTimeAgo(it) },
             pinned = vm.has("pinnedText") || props.has("pinnedText"),
             hearted = state?.optString("heartState") == "TOOLBAR_HEART_STATE_HEARTED",
             replyCount = replyCount,

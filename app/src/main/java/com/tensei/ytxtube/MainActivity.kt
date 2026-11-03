@@ -58,6 +58,11 @@ import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
+import kotlin.math.roundToInt
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -157,6 +162,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
+        if (!PipSettings.enabled) return
         val sp = shortsPlayerHolder
         if (sp != null && sp.isPlaying) {
             // Shorts should not enter PiP or play in background
@@ -227,12 +233,21 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Tab(val label: String, val icon: ImageVector, val selectedIcon: ImageVector) {
+enum class Tab(val defaultLabel: String, val icon: ImageVector, val selectedIcon: ImageVector) {
     Home("Home", Icons.Outlined.Home, Icons.Rounded.Home),
     Music("Music", Icons.Outlined.MusicNote, Icons.Rounded.MusicNote),
     Shorts("Shorts", Icons.Outlined.PlayCircle, Icons.Rounded.PlayCircle),
     Library("Library", Icons.Outlined.VideoLibrary, Icons.Rounded.VideoLibrary),
-    Downloads("Saved", Icons.Outlined.Download, Icons.Rounded.Download),
+    Downloads("Saved", Icons.Outlined.Download, Icons.Rounded.Download);
+
+    val label: String
+        get() = when (this) {
+            Home -> I18n.t("tab_home", defaultLabel)
+            Music -> I18n.t("tab_music", defaultLabel)
+            Shorts -> I18n.t("tab_shorts", defaultLabel)
+            Library -> I18n.t("tab_library", defaultLabel)
+            Downloads -> I18n.t("tab_downloads", defaultLabel)
+        }
 }
 
 
@@ -257,6 +272,7 @@ fun YtxTubeApp() {
     var openAllSubscriptions by remember { mutableStateOf(false) }
     var openSearch by remember { mutableStateOf(false) }
     var tab by rememberSaveable { mutableStateOf(Tab.Home) }
+    var isShortsCommentsOpen by remember { mutableStateOf(false) }
 
 
     LaunchedEffect(tab) { if (tab == Tab.Shorts && player.isPlaying) player.togglePlay() }
@@ -282,6 +298,12 @@ fun YtxTubeApp() {
     val scrollToTop = remember { mutableStateMapOf<Tab, Int>() }
     val reduced = rememberReducedMotion()
     val morph = remember { PlayerMorph(scope) { expanded -> player.expanded = expanded } }
+    var miniOffsetX by remember { mutableFloatStateOf(0f) }
+    var miniOffsetY by remember { mutableFloatStateOf(0f) }
+    LaunchedEffect(player.current?.id) {
+        miniOffsetX = 0f
+        miniOffsetY = 0f
+    }
 
 
     val pageBackdrop = rememberLayerBackdrop()
@@ -409,10 +431,12 @@ fun YtxTubeApp() {
 
     pip.Bind(onClosed = { player.controller?.pause() })
     val landscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    val isTabletOrTv = TvMode.isTv || LocalConfiguration.current.smallestScreenWidthDp >= 600
 
     val fullscreenBeforePip = remember { mutableStateOf(false) }
     val showFullscreen = if (pip.active) fullscreenBeforePip.value
-        else (playerOpen && (landscape || player.portraitFullscreen) && !player.isMusicMode)
+        else if (isTabletOrTv) (playerOpen && (player.fullscreen || player.portraitFullscreen) && !player.isMusicMode)
+        else (playerOpen && (landscape || player.fullscreen || player.portraitFullscreen) && !player.isMusicMode)
     SideEffect { if (!pip.active) fullscreenBeforePip.value = showFullscreen }
     LaunchedEffect(showFullscreen) { player.fullscreen = showFullscreen }
     SystemBarsHidden(showFullscreen)
@@ -420,10 +444,7 @@ fun YtxTubeApp() {
     fun exitFullscreen() {
         player.portraitFullscreen = false
         player.fullscreen = false
-        // Collapse to the mini player as well. Previously only the orientation was
-        // changed, so in landscape the fullscreen surface came straight back and
-        // Back/minimise felt broken.
-        player.expanded = false
+        player.expanded = true
         orientation.exitFullscreen()
     }
 
@@ -432,11 +453,13 @@ fun YtxTubeApp() {
             showFullscreen -> exitFullscreen()
             // A vertical video fills the portrait screen instead of being letterboxed in landscape.
             player.portraitVideo -> player.portraitFullscreen = true
+            isTabletOrTv -> player.fullscreen = true
             else -> orientation.enterFullscreen()
         }
     }
 
-    BackHandler(enabled = player.expanded) { player.expanded = false }
+    BackHandler(enabled = showFullscreen) { exitFullscreen() }
+    BackHandler(enabled = !showFullscreen && player.expanded) { player.expanded = false }
     BackHandler(enabled = !player.expanded && openSettings) { openSettings = false }
     BackHandler(enabled = !player.expanded && openAllSubscriptions && openChannel == null) { openAllSubscriptions = false }
     BackHandler(enabled = !player.expanded && tab != Tab.Home && openPlaylist == null && openChannel == null && !openAllSubscriptions) {
@@ -494,32 +517,49 @@ fun YtxTubeApp() {
         val stageTopPx = with(density) {
             WindowInsets.statusBars.asPaddingValues().calculateTopPadding().toPx()
         }
-        val geometry = remember(constraints.maxWidth, constraints.maxHeight, stackBottom, density, stageAspect, stageTopPx) {
+        val isLiquidMini = player.isMusicMode || MiniPlayerSettings.useLiquidMiniPlayer
+        val geometry = remember(constraints.maxWidth, constraints.maxHeight, stackBottom, density, stageAspect, stageTopPx, miniOffsetX, miniOffsetY, isLiquidMini) {
             with(density) {
                 val w = constraints.maxWidth.toFloat()
                 val h = constraints.maxHeight.toFloat()
                 val miniBottom = h - (navTop + MiniGap).toPx()
-                val miniW = minOf(w - 32.dp.toPx(), MiniWidth.toPx())
-                val miniLeft = (w - miniW) / 2f
-                val miniCard = Rect(miniLeft, miniBottom - MiniHeight.toPx(), miniLeft + miniW, miniBottom)
-                val thumb = Rect(
-                    Offset(miniCard.left + MiniThumbStart.toPx(), miniCard.top + (MiniHeight - MiniThumbHeight).toPx() / 2f),
-                    Size(MiniThumbWidth.toPx(), MiniThumbHeight.toPx()),
-                )
                 val side = StageSideGap.toPx()
-                // The picture starts below the status bar; the status bar keeps the
-                // animated ambient shade behind it instead of sitting on the video.
                 val stageTop = stageTopPx
                 val stage = Rect(side, stageTop, w - side, stageTop + (w - 2 * side) / stageAspect)
-                MorphGeometry(
-                    screen = Size(w, h),
-                    miniCard = miniCard,
-                    miniThumb = thumb,
-                    stage = stage,
-                    miniRadius = MiniRadius.toPx(),
-                    thumbRadius = MiniThumbRadius.toPx(),
-                    stageRadius = StageRadius.toPx(),
-                )
+
+                if (isLiquidMini) {
+                    val miniW = minOf(w - 32.dp.toPx(), MiniWidth.toPx())
+                    val miniLeft = (w - miniW) / 2f
+                    val miniCard = Rect(miniLeft, miniBottom - MiniHeight.toPx(), miniLeft + miniW, miniBottom)
+                    val thumb = Rect(
+                        Offset(miniCard.left + MiniThumbStart.toPx(), miniCard.top + (MiniHeight - MiniThumbHeight).toPx() / 2f),
+                        Size(MiniThumbWidth.toPx(), MiniThumbHeight.toPx()),
+                    )
+                    MorphGeometry(
+                        screen = Size(w, h),
+                        miniCard = miniCard,
+                        miniThumb = thumb,
+                        stage = stage,
+                        miniRadius = MiniRadius.toPx(),
+                        thumbRadius = MiniThumbRadius.toPx(),
+                        stageRadius = StageRadius.toPx(),
+                    )
+                } else {
+                    val cardWidth = 200.dp.toPx().coerceAtMost(w - 32.dp.toPx())
+                    val cardHeight = cardWidth * 9f / 16f
+                    val cardRight = w - 16.dp.toPx()
+                    val baseCard = Rect(cardRight - cardWidth, miniBottom - cardHeight, cardRight, miniBottom)
+                    val miniCard = baseCard.translate(miniOffsetX, miniOffsetY)
+                    MorphGeometry(
+                        screen = Size(w, h),
+                        miniCard = miniCard,
+                        miniThumb = miniCard,
+                        stage = stage,
+                        miniRadius = 12.dp.toPx(),
+                        thumbRadius = 12.dp.toPx(),
+                        stageRadius = StageRadius.toPx(),
+                    )
+                }
             }
         }
         SideEffect { morph.geometry = geometry }
@@ -588,6 +628,7 @@ fun YtxTubeApp() {
                         if (channelState?.url != url) channelState = ChannelState(url, scope)
                         openChannel = url
                     },
+                    onCommentsOpenChange = { isShortsCommentsOpen = it },
                 )
                 Tab.Library -> LibraryScreen(
                     lib, contentPadding, onOpen = player::open, onOpenPlaylist = { ref -> if (ref.id == "DL") tab = Tab.Downloads else openPlaylist = ref },
@@ -702,7 +743,7 @@ fun YtxTubeApp() {
                         appFlipRotation.animateTo(0f, tween(300, easing = androidx.compose.animation.core.LinearOutSlowInEasing))
                     }
                 },
-                contentPadding = contentPadding,
+                contentPadding = PaddingValues(bottom = navBottom),
                 onCheckUpdate = { updateState.check(manual = true) },
             )
         }
@@ -713,52 +754,79 @@ fun YtxTubeApp() {
         }
 
         if (hasMini && !openSettings && tab != Tab.Shorts && shortsEntry == null) {
-
-
             val dismiss = remember { androidx.compose.animation.core.Animatable(0f) }
             LaunchedEffect(player.current?.id) { dismiss.snapTo(0f) }
             val dismissDistance = with(density) { 56.dp.toPx() }
-            MiniPlayer(
-                player,
-                onExpand = { player.expanded = true },
-                showVideo = !showPlayer && !showFullscreen,
-                backdrop = pageBackdrop,
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(start = 16.dp, end = 16.dp, bottom = navTop + MiniGap)
-                    .widthIn(max = MiniWidth)
 
-                    .graphicsLayer {
-                        translationY = dismiss.value
-
-
-                        alpha = (if (showPlayer) 0f else 1f) * (1f - (dismiss.value / (dismissDistance * 1.6f)).coerceIn(0f, 1f))
-                    }
-                    .draggable(
-                        state = rememberDraggableState { delta ->
-                            if (morph.progress.value <= 0f && (delta > 0f || dismiss.value > 0f)) {
-                                scope.launch { dismiss.snapTo((dismiss.value + delta).coerceAtLeast(0f)) }
-                            } else {
-                                morph.dragBy(delta)
-                            }
-                        },
-                        orientation = Orientation.Vertical,
-                        onDragStopped = { velocity ->
-                            if (dismiss.value > 0f) {
-                                if (dismiss.value > dismissDistance || velocity > 800f) {
-                                    scope.launch {
-                                        if (!reduced) dismiss.animateTo(dismissDistance * 2.2f, tween(200, easing = Motion.Emphasized))
-                                        player.close()
+            if (player.isMusicMode || MiniPlayerSettings.useLiquidMiniPlayer) {
+                LiquidMiniPlayer(
+                    player,
+                    onExpand = { player.expanded = true },
+                    showVideo = !showPlayer && !showFullscreen,
+                    backdrop = pageBackdrop,
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(start = 16.dp, end = 16.dp, bottom = navTop + MiniGap)
+                        .widthIn(max = MiniWidth)
+                        .graphicsLayer {
+                            translationY = dismiss.value
+                            alpha = (if (showPlayer) 0f else 1f) * (1f - (dismiss.value / (dismissDistance * 1.6f)).coerceIn(0f, 1f))
+                        }
+                        .draggable(
+                            state = rememberDraggableState { delta ->
+                                if (morph.progress.value <= 0f && (delta > 0f || dismiss.value > 0f)) {
+                                    scope.launch { dismiss.snapTo((dismiss.value + delta).coerceAtLeast(0f)) }
+                                } else {
+                                    morph.dragBy(delta)
+                                }
+                            },
+                            orientation = Orientation.Vertical,
+                            onDragStopped = { velocity ->
+                                if (dismiss.value > 0f) {
+                                    if (dismiss.value > dismissDistance || velocity > 800f) {
+                                        scope.launch {
+                                            if (!reduced) dismiss.animateTo(dismissDistance * 2.2f, tween(200, easing = Motion.Emphasized))
+                                            player.close()
+                                        }
+                                    } else {
+                                        scope.launch { dismiss.snapTo(0f) }
                                     }
                                 } else {
-                                    scope.launch { dismiss.animateTo(0f, spring(dampingRatio = 0.7f, stiffness = 600f)) }
+                                    morph.settle(velocity, reduced)
                                 }
-                            } else {
-                                morph.settle(velocity, reduced)
+                            },
+                        ),
+                )
+            } else {
+                val cardWidthPx = with(density) { 200.dp.toPx() }
+                val screenW = constraints.maxWidth.toFloat()
+                val screenH = constraints.maxHeight.toFloat()
+                MiniPlayer(
+                    state = player,
+                    onExpand = { player.expanded = true },
+                    showVideo = !showPlayer && !showFullscreen,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .offset { IntOffset(miniOffsetX.roundToInt(), miniOffsetY.roundToInt()) }
+                        .padding(start = 16.dp, end = 16.dp, bottom = navTop + MiniGap)
+                        .widthIn(max = 200.dp)
+                        .pointerInput(Unit) {
+                            detectDragGestures { change, dragAmount ->
+                                change.consume()
+                                val minX = -(screenW - cardWidthPx - 32.dp.toPx())
+                                val maxX = 0f
+                                miniOffsetX = (miniOffsetX + dragAmount.x).coerceIn(minX, maxX)
+                                val minY = -(screenH - 240.dp.toPx())
+                                val maxY = 80.dp.toPx()
+                                miniOffsetY = (miniOffsetY + dragAmount.y).coerceIn(minY, maxY)
                             }
+                        }
+                        .graphicsLayer {
+                            translationY = dismiss.value
+                            alpha = (if (showPlayer) 0f else 1f) * (1f - (dismiss.value / (dismissDistance * 1.6f)).coerceIn(0f, 1f))
                         },
-                    ),
-            )
+                )
+            }
         }
 
         val selectTab: (Tab) -> Unit = { selected ->
@@ -780,7 +848,7 @@ fun YtxTubeApp() {
         }
 
 
-        val showBottomBar = !openSettings && shortsEntry == null && !pip.active
+        val showBottomBar = !openSettings && shortsEntry == null && !pip.active && (tab != Tab.Shorts || !isShortsCommentsOpen)
         AnimatedVisibility(
             visible = showBottomBar,
             enter = slideInVertically(tween(260, easing = Motion.Emphasized)) { it } + fadeIn(tween(160)),
@@ -795,10 +863,11 @@ fun YtxTubeApp() {
                 selectedTabIndex = { Tab.entries.indexOf(tab) },
                 onTabSelected = { index -> Tab.entries.getOrNull(index)?.let(selectTab) },
                 backdrop = pageBackdrop,
+                isDarkSurface = tab == Tab.Shorts,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Tab.entries.forEach { t ->
-                    LiquidNavTab(t, t == tab) { selectTab(t) }
+                    LiquidNavTab(t, t == tab, isDarkSurface = tab == Tab.Shorts) { selectTab(t) }
                 }
             }
         }

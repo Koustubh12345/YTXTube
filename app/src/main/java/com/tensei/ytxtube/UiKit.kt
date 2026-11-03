@@ -524,11 +524,22 @@ fun formatDuration(ms: Long): String {
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }
 
-fun formatCount(n: Long): String = when {
-    n < 1_000 -> n.toString()
-    n < 1_000_000 -> trimmed(n / 1_000.0) + "K"
-    n < 1_000_000_000 -> trimmed(n / 1_000_000.0) + "M"
-    else -> trimmed(n / 1_000_000_000.0) + "B"
+fun formatCount(n: Long): String {
+    val lang = LanguageSettings.effectiveLanguageCode()
+    if (lang == "hi") {
+        return when {
+            n < 1_000 -> n.toString()
+            n < 100_000 -> trimmed(n / 1_000.0) + " हज़ार"
+            n < 10_000_000 -> trimmed(n / 100_000.0) + " लाख"
+            else -> trimmed(n / 10_000_000.0) + " करोड़"
+        }
+    }
+    return when {
+        n < 1_000 -> n.toString()
+        n < 1_000_000 -> trimmed(n / 1_000.0) + "K"
+        n < 1_000_000_000 -> trimmed(n / 1_000_000.0) + "M"
+        else -> trimmed(n / 1_000_000_000.0) + "B"
+    }
 }
 
 
@@ -569,8 +580,8 @@ fun ChannelNameWithBadge(
 }
 
 fun channelStatLine(subscribers: Long, videoCount: Long): String = listOfNotNull(
-    subscribers.takeIf { it > 0 }?.let { "${formatStatCount(it)} subscribers" },
-    videoCount.takeIf { it > 0 }?.let { "${formatStatCount(it)} videos" },
+    subscribers.takeIf { it > 0 }?.let { "${formatStatCount(it)} ${I18n.t("subscribers", "subscribers")}" },
+    videoCount.takeIf { it > 0 }?.let { "${formatStatCount(it)} ${I18n.t("videos", "videos")}" },
 ).joinToString(" · ")
 
 private fun trimmed(v: Double): String =
@@ -589,13 +600,13 @@ fun metaLine(channel: String, views: Long, uploaded: String?, isLive: Boolean = 
     if (isLive) {
         listOfNotNull(
             channel.ifBlank { null },
-            views.takeIf { it >= 0 }?.let { "${formatCount(it)} watching" } ?: "Live now",
+            views.takeIf { it >= 0 }?.let { "${formatCount(it)} ${I18n.t("watching", "watching")}" } ?: I18n.t("live_now", "Live now"),
         ).joinToString(" · ")
     } else {
         listOfNotNull(
             channel.ifBlank { null },
-            views.takeIf { it >= 0 }?.let { "${formatCount(it)} views" },
-            uploaded?.ifBlank { null },
+            views.takeIf { it >= 0 }?.let { "${formatCount(it)} ${I18n.t("views", "views")}" },
+            uploaded?.ifBlank { null }?.let { I18n.translateTimeAgo(it) },
         ).joinToString(" · ")
     }
 

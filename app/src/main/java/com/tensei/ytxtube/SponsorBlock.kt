@@ -38,12 +38,30 @@ object SponsorBlock {
             Outro -> "outro"; Preview -> "preview"; MusicOffTopic -> "non-music"; Filler -> "filler"
         }
 
+        val displayLabel: String get() = when (this) {
+            Sponsor -> I18n.t("sb_sponsor", "Sponsor")
+            SelfPromo -> I18n.t("sb_selfpromo", "Self-promotion")
+            Interaction -> I18n.t("sb_interaction", "Like and subscribe reminder")
+            Intro -> I18n.t("sb_intro", "Intro")
+            Outro -> I18n.t("sb_outro", "Outro and credits")
+            Preview -> I18n.t("sb_preview", "Preview and recap")
+            MusicOffTopic -> I18n.t("sb_music_offtopic", "Non-music part of a music video")
+            Filler -> I18n.t("sb_filler", "Filler tangent")
+        }
+
         companion object { fun of(key: String) = entries.firstOrNull { it.key == key } }
     }
 
 
     enum class Action(val label: String) {
-        Auto("Skip"), Button("Ask"), Mark("Show"), Off("Off")
+        Auto("Skip"), Button("Ask"), Mark("Show"), Off("Off");
+
+        val displayLabel: String get() = when (this) {
+            Auto -> I18n.t("sb_skip", "Skip")
+            Button -> I18n.t("sb_ask", "Ask")
+            Mark -> I18n.t("sb_show", "Show")
+            Off -> I18n.t("sb_off", "Off")
+        }
     }
 
     @Immutable

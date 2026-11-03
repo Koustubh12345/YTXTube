@@ -441,7 +441,7 @@ fun CommentsPanel(
                     Box(Modifier.size(width = 36.dp, height = 4.dp).clip(CircleShape).background(c.onSurfaceVariant.copy(alpha = 0.45f)))
                 }
                 Row(Modifier.padding(start = 20.dp, end = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("Comments", fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp)
+                    Text(I18n.t("comments", "Comments"), fontFamily = RoundedHeavy, fontWeight = FontWeight.ExtraBold, fontSize = 21.sp)
                     if (state.total > 0) {
                         Spacer(Modifier.width(8.dp))
                         Text(formatCount(state.total.toLong()), color = c.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 14.sp)
@@ -468,14 +468,14 @@ fun CommentsPanel(
                 }
                 if (!state.loading && state.comments.isEmpty()) item {
                     Text(
-                        if (state.disabled) "Comments are turned off for this video." else "No comments yet.",
+                        if (state.disabled) I18n.t("comments_disabled", "Comments are turned off for this video.") else I18n.t("no_comments", "No comments yet."),
                         color = c.onSurfaceVariant, fontSize = 14.sp, modifier = Modifier.padding(20.dp),
                     )
                 }
                 item { Spacer(Modifier.height(12.dp)) }
             }
             if (Account.signedIn) Composer(state) else Text(
-                "Sign in to comment.",
+                I18n.t("sign_in_to_comment", "Sign in to comment."),
                 color = c.onSurfaceVariant, fontSize = 13.sp,
                 modifier = Modifier.fillMaxWidth().background(c.surfaceContainer).padding(horizontal = 20.dp, vertical = 14.dp),
             )
@@ -506,7 +506,7 @@ private fun Composer(state: CommentsState) {
     Column(Modifier.fillMaxWidth().background(c.surfaceContainer).padding(horizontal = 12.dp, vertical = 10.dp)) {
         state.replyingTo?.let { target ->
             Row(Modifier.padding(start = 8.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Replying to ${target.displayName()}", color = c.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                Text("${I18n.t("replying_to", "Replying to")} ${target.displayName()}", color = c.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 Box(Modifier.size(28.dp).pressable { state.replyingTo = null }, contentAlignment = Alignment.Center) {
                     Icon(Icons.Rounded.Close, "Cancel reply", tint = c.onSurfaceVariant, modifier = Modifier.size(16.dp))
                 }
@@ -519,7 +519,7 @@ private fun Composer(state: CommentsState) {
                     .padding(horizontal = 16.dp, vertical = 12.dp),
             ) {
                 if (state.draft.isEmpty()) {
-                    Text(if (state.replyingTo != null) "Add a reply…" else "Add a comment…", color = c.onSurfaceVariant, fontSize = 15.sp)
+                    Text(if (state.replyingTo != null) I18n.t("add_reply", "Add a reply…") else I18n.t("add_comment", "Add a comment…"), color = c.onSurfaceVariant, fontSize = 15.sp)
                 }
                 BasicTextField(
                     value = state.draft,
@@ -625,7 +625,7 @@ private fun CommentRow(
                 if (Account.signedIn && !comment.id.startsWith("local-")) {
                     Spacer(Modifier.width(16.dp))
                     Text(
-                        "Reply",
+                        I18n.t("reply", "Reply"),
                         color = c.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.ExtraBold,
                         modifier = Modifier.pressable { state.startReply(comment) }.padding(vertical = 2.dp),
                     )
@@ -642,7 +642,7 @@ private fun CommentRow(
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        if (open) "Hide replies" else "${comment.replyCount} ${if (comment.replyCount == 1) "reply" else "replies"}",
+                        if (open) I18n.t("hide_replies", "Hide replies") else "${comment.replyCount} ${if (comment.replyCount == 1) I18n.t("reply", "reply") else I18n.t("replies", "replies")}",
                         color = c.primary,
                         fontWeight = FontWeight.ExtraBold,
                         fontSize = 13.sp,

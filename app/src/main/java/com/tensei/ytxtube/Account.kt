@@ -697,16 +697,22 @@ object InnerTube {
                 JSONObject()
                     .put("clientName", "WEB")
                     .put("clientVersion", Account.clientVersion())
-                    .put("hl", "en")
-                    .put("gl", "US")
+                    .put("hl", LanguageSettings.effectiveLanguageCode())
+                    .put("gl", LanguageSettings.effectiveCountryCode())
                     .apply { Account.visitorData()?.let { put("visitorData", it) } },
             ),
         )
+        val langCode = LanguageSettings.effectiveLanguageCode()
+        val countryCode = LanguageSettings.effectiveCountryCode()
+        val prefCookie = "PREF=hl=" + langCode + "&gl=" + countryCode
+        val cookieVal = if (auth != null) "${Account.cookieHeader()}; $prefCookie" else prefCookie
         val request = Request.Builder()
-            .url("$BASE$endpoint?prettyPrint=false")
+            .url("$BASE$endpoint?prettyPrint=false&hl=$langCode&gl=$countryCode")
             .post(body.toString().toRequestBody(JSON_TYPE))
             .header("User-Agent", Net.USER_AGENT)
-            .apply { if (auth != null) { header("Cookie", Account.cookieHeader()); header("Authorization", auth) } }
+            .header("Accept-Language", "$langCode-$countryCode,$langCode;q=0.9,en-US;q=0.8,en;q=0.7")
+            .header("Cookie", cookieVal)
+            .apply { if (auth != null) header("Authorization", auth) }
             .header("Origin", Account.ORIGIN)
             .header("X-Origin", Account.ORIGIN)
             .header("Referer", Account.ORIGIN + "/")
@@ -734,8 +740,8 @@ object InnerTube {
         val clientContext = JSONObject()
             .put("clientName", "WEB_REMIX")
             .put("clientVersion", WEB_REMIX_CLIENT_VERSION)
-            .put("hl", "en")
-            .put("gl", "US")
+            .put("hl", LanguageSettings.effectiveLanguageCode())
+            .put("gl", LanguageSettings.effectiveCountryCode())
         Account.visitorData()?.let { clientContext.put("visitorData", it) }
 
         body.put(
@@ -745,16 +751,22 @@ object InnerTube {
                 .put("user", JSONObject().put("lockedSafetyMode", false))
         )
 
+        val mlangCode = LanguageSettings.effectiveLanguageCode()
+        val mcountryCode = LanguageSettings.effectiveCountryCode()
+        val mprefCookie = "PREF=hl=" + mlangCode + "&gl=" + mcountryCode
+        val mcookieVal = if (auth != null) "${Account.cookieHeader()}; $mprefCookie" else mprefCookie
         val reqBuilder = Request.Builder()
-            .url("$MUSIC_BASE$endpoint?prettyPrint=false")
+            .url("$MUSIC_BASE$endpoint?prettyPrint=false&hl=$mlangCode&gl=$mcountryCode")
             .post(body.toString().toRequestBody(JSON_TYPE))
             .header("User-Agent", Net.USER_AGENT)
+            .header("Accept-Language", "$mlangCode-$mcountryCode,$mlangCode;q=0.9,en-US;q=0.8,en;q=0.7")
             .header("Origin", MUSIC_ORIGIN)
             .header("X-Origin", MUSIC_ORIGIN)
             .header("Referer", "$MUSIC_ORIGIN/")
             .header("X-YouTube-Client-Name", WEB_REMIX_CLIENT_NAME)
             .header("X-YouTube-Client-Version", WEB_REMIX_CLIENT_VERSION)
             .header("X-Goog-AuthUser", "0")
+            .header("Cookie", mcookieVal)
 
         Account.visitorData()?.let { reqBuilder.header("X-Goog-Visitor-Id", it) }
         if (auth != null) {
@@ -2029,7 +2041,7 @@ object InnerTube {
             avatar = avatar?.let { sharpenChannelAvatarUrl(absoluteUrl(it), 96) },
             durationSec = if (isLive) 0L else parseDuration(duration),
             views = parseViews(o.text("viewCountText") ?: o.text("shortViewCountText") ?: infoRuns.firstOrNull { it.contains("view") || it.contains("watching") }),
-            uploaded = if (isLive) "Live" else (o.text("publishedTimeText") ?: infoRuns.firstOrNull { it.contains("ago") }),
+            uploaded = if (isLive) I18n.t("live_now", "Live") else (o.text("publishedTimeText") ?: infoRuns.firstOrNull { it.contains("ago") || it.contains("पहले") || it.contains("hace") || it.contains("назад") } ?: infoRuns.lastOrNull())?.let { I18n.translateTimeAgo(it) },
             isLive = isLive,
         )
     }
@@ -2060,7 +2072,7 @@ object InnerTube {
             avatar = avatar?.let { sharpenChannelAvatarUrl(absoluteUrl(it), 96) },
             durationSec = if (isLive) 0L else parseDuration(duration),
             views = parseViews(parts.firstOrNull { it.contains("view") || it.contains("watching") }),
-            uploaded = if (isLive) "Live" else parts.firstOrNull { it.contains("ago") },
+            uploaded = if (isLive) I18n.t("live_now", "Live") else (parts.firstOrNull { it.contains("ago") || it.contains("पहले") || it.contains("hace") || it.contains("назад") } ?: parts.getOrNull(2))?.let { I18n.translateTimeAgo(it) },
             isLive = isLive,
         )
     }
@@ -2158,7 +2170,19 @@ object InnerTube {
 
     internal fun parseViews(text: String?): Long {
         val t = text?.lowercase()?.replace(",", "")?.trim() ?: return -1
-        if (t.startsWith("no ")) return 0
+        if (t.startsWith("no ") || t.startsWith("कोई ") || t.startsWith("sin ")) return 0
+        if ("करोड़" in t || "cr" in t) {
+            val num = Regex("([\\d.]+)").find(t)?.groupValues?.get(1)?.toDoubleOrNull() ?: return -1
+            return (num * 10_000_000).toLong()
+        }
+        if ("लाख" in t || "lakh" in t) {
+            val num = Regex("([\\d.]+)").find(t)?.groupValues?.get(1)?.toDoubleOrNull() ?: return -1
+            return (num * 100_000).toLong()
+        }
+        if ("हज़ार" in t) {
+            val num = Regex("([\\d.]+)").find(t)?.groupValues?.get(1)?.toDoubleOrNull() ?: return -1
+            return (num * 1_000).toLong()
+        }
         val m = Regex("([\\d.]+)\\s*([kmb]?)").find(t) ?: return -1
         val n = m.groupValues[1].toDoubleOrNull() ?: return -1
         val mult = when (m.groupValues[2]) { "k" -> 1e3; "m" -> 1e6; "b" -> 1e9; else -> 1.0 }

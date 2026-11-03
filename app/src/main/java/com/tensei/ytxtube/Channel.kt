@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.graphics.Brush
@@ -229,8 +231,9 @@ fun ChannelTabStrip(selected: ChannelTab, onSelect: (ChannelTab) -> Unit, modifi
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .horizontalScroll(rememberScrollState())
             .padding(horizontal = 16.dp, vertical = 6.dp),
-        horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         ChannelTab.entries.forEach { tab ->
             val isSelected = tab == selected
@@ -272,6 +275,8 @@ fun ChannelTabStrip(selected: ChannelTab, onSelect: (ChannelTab) -> Unit, modifi
                     color = foreground,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.sp,
+                    maxLines = 1,
+                    softWrap = false,
                 )
             }
         }
@@ -476,7 +481,7 @@ private fun ChannelSubscribeButton(subscribed: Boolean, onClick: () -> Unit) {
             FlourishIcon(Icons.Rounded.NotificationsActive, null, active = true, kind = Flourish.Ring, tint = content, size = 18.dp)
             Spacer(Modifier.width(6.dp))
         }
-        Text(if (subscribed) "Subscribed" else "Subscribe", color = content, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
+        Text(if (subscribed) I18n.t("subscribed", "Subscribed") else I18n.t("subscribe", "Subscribe"), color = content, fontWeight = FontWeight.ExtraBold, fontSize = 14.sp)
     }
 }
 

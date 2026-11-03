@@ -20,6 +20,7 @@ class YTXTubeApplication : Application(), ImageLoaderFactory {
         super.onCreate()
         appContext = applicationContext
         TvMode.init(this)
+        LanguageSettings.init(this)
         GlassQuality.init(this)
         GlassSettings.init(this)
         NetworkSpeed.init(this)
@@ -42,6 +43,9 @@ class YTXTubeApplication : Application(), ImageLoaderFactory {
         AudioTrackPreference.init(this)
         CaptionPreference.init(this)
         VideoGestureSettings.init(this)
+        PlayerControlSettings.init(this)
+        PipSettings.init(this)
+        MiniPlayerSettings.init(this)
         ResumeStore.init(this)
         Account.init(this)
         SponsorBlock.init(this)

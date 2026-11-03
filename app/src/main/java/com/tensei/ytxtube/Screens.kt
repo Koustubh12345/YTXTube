@@ -106,12 +106,20 @@ private fun AnonHomeBanner(onSignIn: () -> Unit, onSearch: () -> Unit) {
     }
 }
 
-enum class HomeFilter(val label: String) {
+enum class HomeFilter(val raw: String) {
     All("All"),
     Today("Today"),
     Videos("Videos"),
     Subscribed("Subscribed"),
-    Live("Live"),
+    Live("Live");
+
+    val label: String get() = when (this) {
+        All -> I18n.t("filter_all", "All")
+        Today -> I18n.t("filter_today", "Today")
+        Videos -> I18n.t("filter_videos", "Videos")
+        Subscribed -> I18n.t("filter_subscribed", "Subscribed")
+        Live -> I18n.t("filter_live", "Live")
+    }
 }
 
 @Composable
@@ -222,7 +230,7 @@ fun HomeScreen(
                             "No videos from your subscribed channels were found in the current home feed."
                         else
                             "There are no ${activeFilter.label.lowercase()} videos in your home feed right now.",
-                        action = { PillButton("Show all", { activeFilter = HomeFilter.All }) },
+                        action = { PillButton(I18n.t("show_all", "Show all"), { activeFilter = HomeFilter.All }) },
                     )
                 }
             }
@@ -356,7 +364,7 @@ fun SubscriptionsScreen(
         resetKey = scrollToTop to listOf(lib.subscriptions.generation, selectedChannelId, lib.channels.size, activeSubFilter),
         header = {
             Column(Modifier.fillMaxWidth()) {
-                ScreenHeader(title = "Subscriptions") { HeaderActions(onSearch, onAccount) }
+                ScreenHeader(title = I18n.t("subscriptions", "Subscriptions")) { HeaderActions(onSearch, onAccount) }
                 if (signedIn && lib.channels.isNotEmpty()) {
                     SubscriptionsChannelStrip(
                         channels = lib.channels,
@@ -592,7 +600,7 @@ fun LibraryScreen(
     }
     CollapsingHeaderLayout(
         resetKey = scrollToTop to lib.history.generation,
-        header = { ScreenHeader(title = "Library") { HeaderActions(onSearch, onAccount) } },
+        header = { ScreenHeader(title = I18n.t("tab_library", "Library")) { HeaderActions(onSearch, onAccount) } },
     ) { top ->
         PullToRefresh(
             enabled = signedIn,
@@ -612,7 +620,7 @@ fun LibraryScreen(
                 }
                 return@LazyColumn
             }
-            item(key = "historyTitle") { SectionTitle("History") }
+            item(key = "historyTitle") { SectionTitle(I18n.t("history", "History")) }
             item(key = "history") {
                 val history = lib.history.videos
                 when {
@@ -642,7 +650,7 @@ fun LibraryScreen(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        SectionTitle("Subscriptions", modifier = Modifier.padding(0.dp))
+                        SectionTitle(I18n.t("subscriptions", "Subscriptions"), modifier = Modifier.padding(0.dp))
                         Text(
                             "All",
                             color = MaterialTheme.colorScheme.primary,

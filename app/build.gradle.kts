@@ -11,15 +11,24 @@ android {
         applicationId = "com.tensei.ytxtube"
         minSdk = 24
         targetSdk = 36
-        versionCode = 210
-        versionName = "2.1.0"
+        versionCode = 220
+        versionName = "2.2.0"
     }
 
     signingConfigs {
+        create("release") {
+            val keystoreFile = file("release.keystore")
+            if (keystoreFile.exists()) {
+                storeFile = keystoreFile
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "ytxtube_release_key"
+                keyAlias = System.getenv("KEY_ALIAS") ?: "ytxtube"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: "ytxtube_release_key"
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+            }
+        }
         getByName("debug") {
-            // v1 matters on some Android 7/8 Samsung installers; v2 keeps modern
-            // devices happy. Signing with both makes the same APK installable on
-            // the widest range of devices.
             enableV1Signing = true
             enableV2Signing = true
             enableV3Signing = true
@@ -28,12 +37,9 @@ android {
 
     buildTypes {
         release {
-
             isMinifyEnabled = true
             isShrinkResources = true
-
-
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.findByName("release")?.takeIf { file("release.keystore").exists() } ?: signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -51,9 +57,7 @@ android {
 
 
 
-    androidResources {
-        localeFilters += listOf("en")
-    }
+
 
 
     dependenciesInfo {

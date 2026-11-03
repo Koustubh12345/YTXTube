@@ -259,7 +259,9 @@ object YouTube {
             }.orEmpty(),
             likes = info.likeCount,
             subscribers = info.uploaderSubscriberCount,
-            related = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() },
+            related = info.relatedItems.filterIsInstance<StreamInfoItem>().mapNotNull { it.toVideoItem() }.let { list ->
+                if (list.isNotEmpty()) list else fetchFallbackRelated(id, info.name)
+            },
             playable = picked.isPlayable,
             quality = picked.playedHeight?.let { "${it}p${if (picked.hdr) " HDR" else ""}" }
                 ?: if (isLive) "Live" else null,
@@ -268,6 +270,52 @@ object YouTube {
             aspect = (if (picked.usesSeparate) picked.video else picked.muxed)
                 ?.takeIf { it.width > 0 && it.height > 0 }?.let { it.width.toFloat() / it.height },
         )
+    }
+
+    private suspend fun fetchFallbackRelated(id: String, title: String): List<VideoItem> {
+        val parsed = runCatching {
+            val next = InnerTube.postAny("next", org.json.JSONObject().put("videoId", id))
+            val list = mutableListOf<VideoItem>()
+            next.walk { key, obj ->
+                if (key == "compactVideoRenderer" || key == "videoRenderer") {
+                    val vid = obj.optString("videoId")
+                    if (vid.isNotBlank() && vid != id && list.none { it.id == vid }) {
+                        val videoTitle = obj.optJSONObject("title")?.let { t ->
+                            t.optString("simpleText").ifBlank {
+                                t.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                            }
+                        }.orEmpty()
+                        val channel = obj.optJSONObject("shortBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text")
+                            ?: obj.optJSONObject("longBylineText")?.optJSONArray("runs")?.optJSONObject(0)?.optString("text").orEmpty()
+                        val thumb = obj.optJSONObject("thumbnail")?.optJSONArray("thumbnails")?.let { arr ->
+                            arr.optJSONObject(arr.length() - 1)?.optString("url")
+                        }
+                        if (videoTitle.isNotBlank()) {
+                            list.add(
+                                VideoItem(
+                                    id = vid,
+                                    title = videoTitle,
+                                    channel = channel,
+                                    channelUrl = null,
+                                    thumbnail = thumb,
+                                    avatar = null,
+                                    views = -1,
+                                    durationSec = 0,
+                                    uploaded = null,
+                                )
+                            )
+                        }
+                    }
+                }
+            }
+            list
+        }.getOrNull()
+
+        if (!parsed.isNullOrEmpty()) return parsed
+
+        return runCatching {
+            search(title).filter { it.id != id }
+        }.getOrDefault(emptyList())
     }
 
 
@@ -353,24 +401,27 @@ object YouTube {
 
 
     private fun uploadedText(textual: String?, date: DateWrapper?): String? {
-        if (textual != null && !ISO_DATE.containsMatchIn(textual)) return textual
-        val then = date?.offsetDateTime()?.toInstant() ?: return textual?.substringBefore('T')
-        return relativeTime(then)
+        val then = date?.offsetDateTime()?.toInstant()
+        if (then != null) return relativeTime(then)
+        if (textual != null) {
+            if (ISO_DATE.containsMatchIn(textual)) return textual.substringBefore('T')
+            return I18n.translateTimeAgo(textual)
+        }
+        return null
     }
 
     private val ISO_DATE = Regex("^\\d{4}-\\d{2}-\\d{2}T")
 
     fun relativeTime(then: Instant, now: Instant = Instant.now()): String {
         val s = Duration.between(then, now).seconds.coerceAtLeast(0)
-        fun ago(n: Long, unit: String) = "$n $unit${if (n == 1L) "" else "s"} ago"
         return when {
-            s < 60 -> "just now"
-            s < 3_600 -> ago(s / 60, "minute")
-            s < 86_400 -> ago(s / 3_600, "hour")
-            s < 7 * 86_400 -> ago(s / 86_400, "day")
-            s < 30 * 86_400 -> ago(s / (7 * 86_400), "week")
-            s < 365 * 86_400 -> ago(s / (30 * 86_400), "month")
-            else -> ago(s / (365 * 86_400), "year")
+            s < 60 -> I18n.t("just_now", "just now")
+            s < 3_600 -> I18n.timeAgo(s / 60, "minute")
+            s < 86_400 -> I18n.timeAgo(s / 3_600, "hour")
+            s < 7 * 86_400 -> I18n.timeAgo(s / 86_400, "day")
+            s < 30 * 86_400 -> I18n.timeAgo(s / (7 * 86_400), "week")
+            s < 365 * 86_400 -> I18n.timeAgo(s / (30 * 86_400), "month")
+            else -> I18n.timeAgo(s / (365 * 86_400), "year")
         }
     }
 
@@ -485,6 +536,20 @@ enum class PlaybackQualityMode(val label: String, val subtitle: String) {
     DATA_SAVER("Data Saver", "Play in lowest quality to save data"),
     SPECIFIC("Specific Quality", "Play in chosen fixed resolution");
 
+    val displayLabel: String get() = when (this) {
+        AUTO -> I18n.t("quality_auto", "Auto (Recommended)")
+        HIGH -> I18n.t("quality_high", "High Quality")
+        DATA_SAVER -> I18n.t("quality_data_saver", "Data Saver")
+        SPECIFIC -> I18n.t("quality_specific", "Specific Quality")
+    }
+
+    val displaySubtitle: String get() = when (this) {
+        AUTO -> I18n.t("quality_auto_sub", "Optimal quality based on your network speed")
+        HIGH -> I18n.t("quality_high_sub", "Play in highest available quality")
+        DATA_SAVER -> I18n.t("quality_data_saver_sub", "Play in lowest quality to save data")
+        SPECIFIC -> I18n.t("quality_specific_sub", "Play in chosen fixed resolution")
+    }
+
     companion object {
         fun fromKey(key: String?): PlaybackQualityMode = when (key?.uppercase()) {
             "HIGH" -> HIGH
@@ -526,14 +591,14 @@ object QualityPreference {
 
     val videoQualityDisplay: String
         get() = when (videoQualityMode) {
-            PlaybackQualityMode.SPECIFIC -> specificVideoHeight?.let { "${it}p (Always)" } ?: "Specific"
-            else -> videoQualityMode.label
+            PlaybackQualityMode.SPECIFIC -> specificVideoHeight?.let { "${it}p (${I18n.t("always", "Always")})" } ?: I18n.t("specific", "Specific")
+            else -> videoQualityMode.displayLabel
         }
 
     val shortsQualityDisplay: String
         get() = when (shortsQualityMode) {
-            PlaybackQualityMode.SPECIFIC -> specificShortsHeight?.let { "${it}p (Always)" } ?: "Specific"
-            else -> shortsQualityMode.label
+            PlaybackQualityMode.SPECIFIC -> specificShortsHeight?.let { "${it}p (${I18n.t("always", "Always")})" } ?: I18n.t("specific", "Specific")
+            else -> shortsQualityMode.displayLabel
         }
 
     fun init(context: Context) {
@@ -845,8 +910,7 @@ object StreamSelection {
         }
         val audio = audioTracks(info).firstOrNull { it.isOriginal }?.stream
             ?: info.audioStreams.filter { it.isUrl }
-                .sortedWith(compareBy<AudioStream> { if (it.format == MediaFormat.M4A) 0 else 1 }.thenByDescending { it.averageBitrate })
-                .firstOrNull()
+                .maxByOrNull { kotlin.math.max(it.averageBitrate, it.bitrate) }
         if (video != null && audio != null) return Picked(video, audio, null)
 
         val muxedCandidates = info.videoStreams.filter { it.isUrl && it.height > 0 }

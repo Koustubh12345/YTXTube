@@ -53,23 +53,70 @@ object Net {
 class NewPipeDownloader private constructor(private val client: OkHttpClient) : Downloader() {
 
     override fun execute(request: Request): Response {
-        val body = request.dataToSend()?.toRequestBody()
+        val langCode = runCatching { LanguageSettings.effectiveLanguageCode() }.getOrNull() ?: "en"
+        val countryCode = runCatching { LanguageSettings.effectiveCountryCode() }.getOrNull() ?: "US"
+        val isYouTube = request.url().contains("youtube.com") || request.url().contains("youtubei")
+
+        var sendData = request.dataToSend()
+        if (sendData != null && isYouTube && langCode.isNotEmpty()) {
+            val raw = String(sendData, Charsets.UTF_8)
+            if (raw.contains("\"context\"") || raw.contains("\"client\"")) {
+                var modified = raw
+                if (modified.contains("\"hl\":")) {
+                    modified = modified.replace(Regex("\"hl\"\\s*:\\s*\"[^\"]*\""), "\"hl\":\"$langCode\"")
+                } else if (modified.contains("\"client\":{")) {
+                    modified = modified.replace("\"client\":{", "\"client\":{\"hl\":\"$langCode\",\"gl\":\"$countryCode\",")
+                }
+                if (modified.contains("\"gl\":")) {
+                    modified = modified.replace(Regex("\"gl\"\\s*:\\s*\"[^\"]*\""), "\"gl\":\"$countryCode\"")
+                }
+                sendData = modified.toByteArray(Charsets.UTF_8)
+            }
+        }
+        val body = sendData?.toRequestBody()
+
+        var targetUrl = request.url()
+        if (isYouTube && langCode.isNotEmpty()) {
+            val httpUrl = targetUrl.toHttpUrlOrNull()
+            if (httpUrl != null) {
+                targetUrl = httpUrl.newBuilder()
+                    .removeAllQueryParameters("hl")
+                    .addQueryParameter("hl", langCode)
+                    .removeAllQueryParameters("gl")
+                    .addQueryParameter("gl", countryCode)
+                    .build().toString()
+            }
+        }
+
         val builder = okhttp3.Request.Builder()
             .method(request.httpMethod(), body)
-            .url(request.url())
+            .url(targetUrl)
             .addHeader("User-Agent", Net.USER_AGENT)
         request.headers().forEach { (name, values) ->
             builder.removeHeader(name)
             values.forEach { builder.addHeader(name, it) }
         }
 
+        builder.removeHeader("Accept-Language")
+        builder.addHeader("Accept-Language", "$langCode-$countryCode,$langCode;q=0.9,en-US;q=0.8,en;q=0.7")
 
-
-        if (request.url().contains("youtube.com") && Account.signedIn) {
-            val cookies = Account.cookieHeader()
-            if (cookies.isNotEmpty() && !request.headers().containsKey("Cookie")) {
-                builder.addHeader("Cookie", cookies)
+        val existingCookie = request.headers()["Cookie"]?.firstOrNull() ?: ""
+        val prefCookie = "PREF=hl=$langCode&gl=$countryCode"
+        val mergedCookie = buildString {
+            if (Account.signedIn) {
+                val acctCookies = Account.cookieHeader()
+                if (acctCookies.isNotEmpty()) append(acctCookies).append("; ")
             }
+            if (existingCookie.isNotEmpty()) append(existingCookie).append("; ")
+            if (!contains("PREF=")) append(prefCookie)
+        }.trim().removeSuffix(";")
+
+        if (mergedCookie.isNotEmpty()) {
+            builder.removeHeader("Cookie")
+            builder.addHeader("Cookie", mergedCookie)
+        }
+
+        if (isYouTube && Account.signedIn) {
             val auth = Account.authorization()
             if (auth != null && !request.headers().containsKey("Authorization")) {
                 builder.addHeader("Authorization", auth)

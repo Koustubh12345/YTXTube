@@ -298,6 +298,9 @@ fun VideoContent(
                 if (portraitEdgeScrub && down.position.y >= size.height - EdgeScrubTouchPadAbove.roundToPx()) {
                     return@awaitEachGesture
                 }
+                if (fullscreen && down.position.y <= with(viewConfiguration) { 120f }) {
+                    return@awaitEachGesture
+                }
                 down.consume()
                 if (!currentInteractive) {
                     waitForUpOrCancellation()
@@ -315,9 +318,6 @@ fun VideoContent(
                 var isDraggingGesture = false
                 var lastY = downY
 
-
-
-
                 var verticalSwipeHandled = false
                 val upEarly = withTimeoutOrNull(holdSpeedMs) {
                     var event = awaitPointerEvent()
@@ -331,7 +331,6 @@ fun VideoContent(
                             val isVerticalIntent = kotlin.math.abs(totalDy) > kotlin.math.abs(totalDx) * 1.5f
 
                             if (fullscreen) {
-
                                 val gesturesOn = VideoGestureSettings.enabled
                                 val isLeftEdge = gesturesOn && downX < 0.20f
                                 val isRightEdge = gesturesOn && downX > 0.80f
@@ -339,11 +338,6 @@ fun VideoContent(
                                 if (!isDraggingGesture && isVerticalIntent && kotlin.math.abs(totalDy) > 60f) {
                                     if (isLeftEdge || isRightEdge) {
                                         isDraggingGesture = true
-                                    } else if (totalDy < -90f) {
-
-                                        verticalSwipeHandled = true
-                                        onToggleFullscreen()
-                                        return@withTimeoutOrNull null
                                     }
                                 }
                                 if (isDraggingGesture) {
@@ -682,6 +676,28 @@ fun VideoContent(
                             SkipSegmentPill(segment, enabled = true) { touched(); state.skipSegment(segment) }
                             Spacer(Modifier.width(6.dp))
                         }
+                        if (PlayerControlSettings.showQuickControls) {
+                            GlassButton(
+                                Icons.Rounded.Speed,
+                                "Playback speed",
+                                enabled,
+                                size = 34.dp,
+                                iconSize = 20.dp,
+                                tinted = false,
+                                backdrop = videoBackdrop,
+                            ) { touched(); state.sheet = PlayerSheet.Speed }
+                            Spacer(Modifier.width(4.dp))
+                            GlassButton(
+                                Icons.Rounded.HighQuality,
+                                "Quality",
+                                enabled,
+                                size = 34.dp,
+                                iconSize = 20.dp,
+                                tinted = false,
+                                backdrop = videoBackdrop,
+                            ) { touched(); state.sheet = PlayerSheet.Quality }
+                            Spacer(Modifier.width(4.dp))
+                        }
                         GlassButton(
                             if (fullscreen) Icons.Rounded.FullscreenExit else Icons.Rounded.Fullscreen,
                             if (fullscreen) "Exit fullscreen" else "Fullscreen",
@@ -912,27 +928,12 @@ fun Modifier.aspectFit(aspect: Float, cover: Boolean = false) = layout { measura
 
 @Composable
 fun FullscreenPlayer(state: PlayerState, onExit: () -> Unit) {
-    val reduced = rememberReducedMotion()
-    var drag by remember { mutableStateOf(0f) }
     VideoContent(
         state = state,
         fullscreen = true,
         onCollapse = onExit,
         onToggleFullscreen = onExit,
-        modifier = Modifier
-            .fillMaxSize()
-            .draggable(
-                state = rememberDraggableState { delta -> drag = (drag + delta).coerceAtLeast(0f) },
-                orientation = Orientation.Vertical,
-                onDragStopped = { velocity ->
-                    if (drag > 120f || velocity > 1400f) onExit()
-                    drag = 0f
-                },
-            )
-            .graphicsLayer {
-
-                translationY = if (reduced) 0f else drag * 0.35f
-            },
+        modifier = Modifier.fillMaxSize(),
     )
 }
 

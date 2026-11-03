@@ -449,10 +449,10 @@ object Downloads {
         if (task.height == 0) {
             val audio = bestAudio(info, webm = false) ?: throw IOException("Audio stream not available")
             val work = workFile(task, "audio")
-            work.delete()
             val remote = probe(audio.content)
             task.total = remote.total
-            val received = transfer(audio.content, work, remote) { done -> report(task, done) }
+            val aDone = AtomicLong(if (work.exists()) work.length() else 0L)
+            val received = transfer(audio.content, work, remote) { n -> report(task, aDone.addAndGet(n)) }
             if (received != remote.total || work.length() != remote.total) {
                 throw IOException("Audio download incomplete (${work.length()} of ${remote.total} bytes)")
             }
@@ -475,10 +475,10 @@ object Downloads {
         if (muxed != null) {
             task.total = option.estimatedBytes
             val work = workFile(task, "video")
-            work.delete()
             val remote = probe(muxed.content)
             task.total = remote.total
-            val received = transfer(muxed.content, work, remote) { done -> report(task, done) }
+            val mDone = AtomicLong(if (work.exists()) work.length() else 0L)
+            val received = transfer(muxed.content, work, remote) { n -> report(task, mDone.addAndGet(n)) }
             if (received != remote.total || work.length() != remote.total) {
                 throw IOException("Download incomplete (${work.length()} of ${remote.total} bytes)")
             }
@@ -595,133 +595,71 @@ object Downloads {
         remote: Remote,
         onProgress: (Long) -> Unit,
     ): Long {
-        if (!remote.ranges) return downloadSequential(url, file, remote, onProgress)
-        // Eight lanes saturate a fast link without making YouTube's edge throttle the
-        // last few percent, which is what used to leave a pre-sized file full of holes.
-        val chunks = when {
-            remote.total >= 16L * 1024 * 1024 -> 8
-            remote.total >= 4L * 1024 * 1024 -> 6
-            remote.total >= 1024L * 1024 -> 4
-            else -> 2
-        }
-        RandomAccessFile(file, "rw").use { it.setLength(remote.total) }
-        val span = remote.total / chunks
-        val received = coroutineScope {
-            (0 until chunks).map { index ->
-                val start = index * span
-                val end = if (index == chunks - 1) remote.total - 1 else (index + 1) * span - 1
-                async(Dispatchers.IO) { downloadRange(url, file, start, end, onProgress) }
-            }.awaitAll().sum()
-        }
-        if (received != remote.total) {
-            throw IOException("Only $received of ${remote.total} bytes arrived")
-        }
-        return received
-    }
+        var downloaded = if (file.exists()) file.length() else 0L
+        if (remote.total > 0 && downloaded >= remote.total) return downloaded
 
-    private fun downloadRange(
-        url: String,
-        file: File,
-        start: Long,
-        end: Long,
-        onProgress: (Long) -> Unit,
-    ): Long {
-        var last: Throwable? = null
-        repeat(3) { attempt ->
+        var attempts = 0
+        val maxAttempts = 5
+        val buffer = ByteArray(128 * 1024)
+
+        while (remote.total <= 0 || downloaded < remote.total) {
             try {
-                return downloadRangeOnce(url, file, start, end, onProgress)
+                val reqBuilder = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", Net.USER_AGENT)
+                    .header("Referer", "https://www.youtube.com/")
+
+                if (downloaded > 0) {
+                    reqBuilder.header("Range", "bytes=$downloaded-")
+                }
+
+                Net.client.newCall(reqBuilder.build()).execute().use { response ->
+                    if (response.code != 200 && response.code != 206) {
+                        throw HttpStatusException(response.code)
+                    }
+                    val body = response.body ?: throw IOException("Empty response body")
+                    val isPartial = response.code == 206
+                    val source = body.source()
+
+                    RandomAccessFile(file, "rw").use { raf ->
+                        if (isPartial && downloaded > 0) {
+                            raf.seek(downloaded)
+                        } else {
+                            raf.seek(0)
+                            raf.setLength(0)
+                            downloaded = 0L
+                        }
+
+                        while (true) {
+                            val read = source.read(buffer)
+                            if (read <= 0) break
+                            raf.write(buffer, 0, read)
+                            downloaded += read
+                            onProgress(read.toLong())
+                            attempts = 0
+                        }
+                    }
+                }
+
+                if (remote.total <= 0 || downloaded >= remote.total) {
+                    break
+                }
+            } catch (e: CancellationException) {
+                throw e
             } catch (t: Throwable) {
-                if (t is CancellationException) throw t
-                last = t
-                Thread.sleep(350L * (attempt + 1))
-            }
-        }
-        throw IOException("Range $start-$end failed", last)
-    }
-
-    private fun downloadRangeOnce(
-        url: String,
-        file: File,
-        start: Long,
-        end: Long,
-        onProgress: (Long) -> Unit,
-    ): Long {
-        fun makeRangeReq(u: String, addRangeQuery: Boolean): Request {
-            val finalUrl = if (addRangeQuery) withRange(u, start, end) else u
-            return Request.Builder()
-                .url(finalUrl)
-                .header("Range", "bytes=$start-$end")
-                .header("User-Agent", Net.USER_AGENT)
-                .header("Referer", "https://www.youtube.com/")
-                .build()
-        }
-
-        var res = runCatching { Net.client.newCall(makeRangeReq(url, false)).execute() }.getOrNull()
-        if (res == null || !res.isSuccessful) {
-            res?.close()
-            res = runCatching { Net.client.newCall(makeRangeReq(url, true)).execute() }.getOrNull()
-        }
-        val response = res ?: throw IOException("Range request failed")
-        response.use { r ->
-            if (r.code != 206) throw IOException("Server did not honour the byte range (HTTP ${r.code})")
-            val contentRange = r.header("Content-Range").orEmpty()
-            val rangeStart = contentRange.substringAfter("bytes ", "")
-                .substringBefore('-').toLongOrNull()
-            if (rangeStart != null && rangeStart != start) {
-                throw IOException("Server returned range $rangeStart instead of $start")
-            }
-            val body = r.body ?: throw IOException("Empty response")
-            var received = 0L
-            RandomAccessFile(file, "rw").use { out ->
-                out.seek(start)
-                var position = start
-                val buffer = ByteArray(256 * 1024)
-                val source = body.source()
-                while (position <= end) {
-                    val want = min(buffer.size.toLong(), end - position + 1).toInt()
-                    val read = source.read(buffer, 0, want)
-                    if (read <= 0) throw IOException("Connection ended at ${position - start} of ${end - start + 1} bytes")
-                    out.write(buffer, 0, read)
-                    position += read
-                    received += read
-                    onProgress(read.toLong())
+                attempts++
+                Log.w(TAG, "Download interrupted at $downloaded/${remote.total}, attempt $attempts of $maxAttempts", t)
+                if (attempts >= maxAttempts) {
+                    throw IOException("Download failed at $downloaded of ${remote.total} bytes: ${t.message}", t)
                 }
+                kotlinx.coroutines.delay(1000L * attempts)
             }
-            return received
         }
-    }
 
-    private fun downloadSequential(
-        url: String,
-        file: File,
-        remote: Remote,
-        onProgress: (Long) -> Unit,
-    ): Long {
-        val req = Request.Builder()
-            .url(url)
-            .header("User-Agent", Net.USER_AGENT)
-            .header("Referer", "https://www.youtube.com/")
-            .build()
-        Net.client.newCall(req).execute().use { response ->
-            if (!response.isSuccessful) throw HttpStatusException(response.code)
-            val body = response.body ?: throw IOException("Empty response")
-            var received = 0L
-            file.outputStream().buffered(256 * 1024).use { out ->
-                val source = body.source()
-                val buffer = ByteArray(256 * 1024)
-                while (true) {
-                    val read = source.read(buffer)
-                    if (read < 0) break
-                    out.write(buffer, 0, read)
-                    received += read
-                    onProgress(read.toLong())
-                }
-            }
-            if (remote.total > 0 && received != remote.total) {
-                throw IOException("Only $received of ${remote.total} bytes arrived")
-            }
-            return received
+        if (remote.total > 0 && downloaded < remote.total) {
+            throw IOException("Incomplete download: received $downloaded of ${remote.total} bytes")
         }
+        return downloaded
     }
 
     private fun withRange(url: String, start: Long, end: Long): String {
@@ -773,16 +711,23 @@ object Downloads {
                 else -> 0L
             }
 
+            var lastVTime = -1L
+            var lastATime = -1L
             while (vSize >= 0 || aSize >= 0) {
+                if (Thread.interrupted()) throw CancellationException("Muxing cancelled")
                 val vTime = if (vSize >= 0) videoEx.sampleTime else Long.MAX_VALUE
                 val aTime = if (aSize >= 0) audioEx.sampleTime else Long.MAX_VALUE
                 if (vTime <= aTime) {
-                    info.set(0, vSize, (vTime - base).coerceAtLeast(0L), videoEx.sampleFlags)
+                    val pts = (vTime - base).coerceAtLeast(lastVTime + 1)
+                    lastVTime = pts
+                    info.set(0, vSize, pts, videoEx.sampleFlags)
                     m.writeSampleData(vOut, vBuffer, info)
                     videoEx.advance()
                     vSize = videoEx.readSampleData(vBuffer, 0)
                 } else {
-                    info.set(0, aSize, (aTime - base).coerceAtLeast(0L), audioEx.sampleFlags)
+                    val pts = (aTime - base).coerceAtLeast(lastATime + 1)
+                    lastATime = pts
+                    info.set(0, aSize, pts, audioEx.sampleFlags)
                     m.writeSampleData(aOut, aBuffer, info)
                     audioEx.advance()
                     aSize = audioEx.readSampleData(aBuffer, 0)

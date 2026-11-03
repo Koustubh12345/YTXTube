@@ -6,6 +6,7 @@ import android.content.pm.ActivityInfo
 import android.content.pm.PackageManager
 import android.util.Rational
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.core.app.PictureInPictureModeChangedInfo
 import androidx.core.util.Consumer
 import androidx.lifecycle.Lifecycle
@@ -106,16 +107,36 @@ fun rememberOrientationController(activity: Activity) = remember(activity) { Ori
 @Composable
 fun SystemBarsHidden(hidden: Boolean) {
     val view = LocalView.current
-    DisposableEffect(hidden) {
-        val window = (view.context as Activity).window
-        val controller = WindowCompat.getInsetsController(window, view)
-        if (hidden) {
-            controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-            controller.hide(WindowInsetsCompat.Type.systemBars())
-        } else {
-            controller.show(WindowInsetsCompat.Type.systemBars())
+    val dark = isDarkTheme()
+    DisposableEffect(hidden, dark) {
+        val activity = view.context as? ComponentActivity ?: (view.context as? Activity)
+        val window = activity?.window
+        val controller = window?.let { WindowCompat.getInsetsController(it, view) }
+        fun restoreBars() {
+            controller?.show(WindowInsetsCompat.Type.systemBars())
+            controller?.isAppearanceLightStatusBars = !dark
+            controller?.isAppearanceLightNavigationBars = !dark
+            if (activity is ComponentActivity) {
+                val barStyle = if (dark) {
+                    androidx.activity.SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                } else {
+                    androidx.activity.SystemBarStyle.light(android.graphics.Color.TRANSPARENT, android.graphics.Color.TRANSPARENT)
+                }
+                runCatching {
+                    activity.enableEdgeToEdge(statusBarStyle = barStyle, navigationBarStyle = barStyle)
+                    controller?.isAppearanceLightStatusBars = !dark
+                    controller?.isAppearanceLightNavigationBars = !dark
+                }
+            }
         }
-        onDispose { controller.show(WindowInsetsCompat.Type.systemBars()) }
+
+        if (hidden) {
+            controller?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            controller?.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            restoreBars()
+        }
+        onDispose { restoreBars() }
     }
 }
 
