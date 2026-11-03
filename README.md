@@ -14,7 +14,7 @@
 
 <br/>
 
-[**Download Latest APK (v2.2.0)**](https://github.com/Koustubh12345/YTXTube/releases/latest)
+[**Download Latest APK (v2.2.0)**](https://github.com/Koustubh12345/YTXTube/releases/latest) &nbsp;•&nbsp; [**🌐 Try YTXTube Web App**](https://koustubh12345.github.io/YTXTube/)
 
 </div>
 
@@ -33,6 +33,14 @@
 - **Search & Explore** - Search, channels, playlists, and community posts
 - **Background & PiP** - Background playback and Picture-in-Picture
 - **Android TV Support** - Dedicated TV mode with full D-pad remote navigation
+
+---
+
+## YTXTube Website
+
+Web app to watch YouTube videos without ads or sponsors, playing videos at highest quality with no ads and HDR support.
+
+[**🌐 Open YTXTube Web App**](https://koustubh12345.github.io/YTXTube/)
 
 ---
 
