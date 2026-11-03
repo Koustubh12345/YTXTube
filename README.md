@@ -29,11 +29,11 @@ Version 2.2.0 · Android 7.0+ · one APK for phones, tablets and Android TV.
     <td align="center"><img src="docs/screenshots/01-home.jpg" width="180" alt="Home"><br><sub>Home</sub></td>
     <td align="center"><img src="docs/screenshots/02-shorts.jpg" width="180" alt="Shorts"><br><sub>Shorts</sub></td>
     <td align="center"><img src="docs/screenshots/03-player.jpg" width="180" alt="Video player"><br><sub>Video player</sub></td>
-    <td align="center"><img src="docs/screenshots/04-music.jpg" width="180" alt="Music"><br><sub>Music</sub></td>
+    <td align="center"><img src="docs/screenshots/04-music-player.jpg" width="180" alt="Music player"><br><sub>Music player</sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/screenshots/05-music-player.jpg" width="180" alt="Music player"><br><sub>Music player</sub></td>
-    <td align="center"><img src="docs/screenshots/06-library.jpg" width="180" alt="Library"><br><sub>Library</sub></td>
+    <td align="center"><img src="docs/screenshots/05-lyrics.jpg" width="180" alt="Lyrics"><br><sub>Lyrics</sub></td>
+    <td align="center"><img src="docs/screenshots/06-downloading.jpg" width="180" alt="Downloading"><br><sub>Downloading</sub></td>
     <td align="center"><img src="docs/screenshots/07-downloads.jpg" width="180" alt="Downloads"><br><sub>Downloads</sub></td>
     <td align="center"><img src="docs/screenshots/08-settings.jpg" width="180" alt="Settings"><br><sub>Settings</sub></td>
   </tr>
