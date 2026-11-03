@@ -37,6 +37,10 @@ Version 2.2.0 · Android 7.0+ · one APK for phones, tablets and Android TV.
   </tr>
 </table>
 
+## Disclaimer
+
+YTXTube is an independent, open-source project and is **not affiliated with or endorsed by Google LLC or YouTube**. All content is streamed directly from YouTube's servers for personal, educational use. Provided "as is" under the GPL-3.0 license without warranty; users are responsible for complying with YouTube's Terms of Service and applicable copyright laws.
+
 ## Base [FlashTube](https://github.com/JustaThinker/FlashTube)
 
 ## Build
