@@ -20,9 +20,9 @@ android {
             val keystoreFile = file("release.keystore")
             if (keystoreFile.exists()) {
                 storeFile = keystoreFile
-                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "ytxtube_release_key"
-                keyAlias = System.getenv("KEY_ALIAS") ?: "ytxtube"
-                keyPassword = System.getenv("KEY_PASSWORD") ?: "ytxtube_release_key"
+                storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "android"
+                keyAlias = System.getenv("KEY_ALIAS") ?: "androiddebugkey"
+                keyPassword = System.getenv("KEY_PASSWORD") ?: "android"
                 enableV1Signing = true
                 enableV2Signing = true
                 enableV3Signing = true
