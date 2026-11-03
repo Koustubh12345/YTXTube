@@ -69,6 +69,18 @@ Web app to watch YouTube videos without ads or sponsors, playing videos at highe
 
 ---
 
+## Join Our Community
+
+Facing issues or have suggestions for YTXTube? Join our Telegram community to report bugs, share feedback, and request new features.
+
+<p align="center">
+  <a href="https://t.me/TenSeiChadChat">
+    <img src="https://img.shields.io/badge/Join%20Telegram%20Community-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Join Telegram Community" />
+  </a>
+</p>
+
+---
+
 ## Disclaimer
 
 YTXTube is an independent, open-source project and is **not affiliated with or endorsed by Google LLC or YouTube**. All content is streamed directly from YouTube's servers for personal, educational use. Provided "as is" under the GPL-3.0 license without warranty; users are responsible for complying with YouTube's Terms of Service and applicable copyright laws.
