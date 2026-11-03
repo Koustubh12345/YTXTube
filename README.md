@@ -2,6 +2,10 @@
 
 # YTXTube
 
+<img src="docs/icon.png" width="100" alt="YTXTube Icon" />
+
+<br/>
+
 **A lightweight (3MB) YouTube and YouTube Music client with a modern Liquid Glass UI, ad-free playback, endless personalised Shorts, synced Apple Music-style lyrics, and high-quality downloads.**
 
 [![Version](https://img.shields.io/badge/Version-2.2.0-E50914?style=flat-square&logo=android&logoColor=white)](https://github.com/Koustubh12345/YTXTube/releases/latest)
