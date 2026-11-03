@@ -22,17 +22,17 @@
 
 ## Features
 
-- **Liquid Glass UI** — Frosted glass aesthetic across the player, Shorts, fullscreen controls, settings, and music mini player
-- **Multilingual Support** — Multiple languages support across the entire app
-- **2 Mini Player Styles** — Modern YouTube-style floating draggable miniplayer and classic Liquid Glass dock
-- **Ad-Free Playback** — Ad-free YouTube and YouTube Music playback
-- **Personalised Shorts** — Endless Shorts feed with a one-tap fresh batch and loading animation
-- **Synced Lyrics** — Synced lyrics with an Apple Music-style animated lyric view
-- **High-Quality Downloads** — High-speed video and audio downloads up to 4K / HDR
-- **4K HDR Playback** — 4K HDR playback and customizable fixed resolution quality lock
-- **Search & Explore** — Search, channels, playlists, and community posts
-- **Background & PiP** — Background playback and Picture-in-Picture
-- **Android TV Support** — Dedicated TV mode with full D-pad remote navigation
+- **Liquid Glass UI** - Frosted glass aesthetic across the player, Shorts, fullscreen controls, settings, and music mini player
+- **Multilingual Support** - Multiple languages support across the entire app
+- **2 Mini Player Styles** - Modern YouTube-style floating draggable miniplayer and classic Liquid Glass dock
+- **Ad-Free Playback** - Ad-free YouTube and YouTube Music playback
+- **Personalised Shorts** - Endless Shorts feed with a one-tap fresh batch and loading animation
+- **Synced Lyrics** - Synced lyrics with an Apple Music-style animated lyric view
+- **High-Quality Downloads** - High-speed video and audio downloads up to 4K / HDR
+- **4K HDR Playback** - 4K HDR playback and customizable fixed resolution quality lock
+- **Search & Explore** - Search, channels, playlists, and community posts
+- **Background & PiP** - Background playback and Picture-in-Picture
+- **Android TV Support** - Dedicated TV mode with full D-pad remote navigation
 
 ---
 
