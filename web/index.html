@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <meta name="supported-color-profiles" content="display-p3">
+  <title>YTXTube</title>
+  <link rel="icon" href="icon.png" type="image/png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <script src="https://www.youtube.com/iframe_api"></script>
+</head>
+<body>
+  
+  <header class="yt-header">
+    <div class="header-left">
+      <a href="#" class="yt-logo" id="logo-btn" title="YTXTube Home">
+        <img src="icon.png" alt="YTXTube" class="logo-img">
+        <span class="logo-text">YTXTube</span>
+      </a>
+    </div>
+
+    <div class="header-center">
+      <form class="search-form" id="search-form">
+        <div class="search-box">
+          <input type="text" id="search-input" placeholder="Search videos..." autocomplete="off">
+          <button type="button" class="clear-btn" id="clear-search" style="display: none;">
+            <svg viewBox="0 0 24 24" class="yt-icon"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>
+          </button>
+        </div>
+        <button type="submit" class="search-btn" title="Search">
+          <svg viewBox="0 0 24 24" class="yt-icon"><path d="M20.87 20.17l-5.59-5.59C16.35 13.35 17 11.75 17 10c0-3.87-3.13-7-7-7s-7 3.13-7 7 3.13 7 7 7c1.75 0 3.35-.65 4.58-1.71l5.59 5.59.7-.71zM10 16c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z" fill="currentColor"/></svg>
+        </button>
+      </form>
+    </div>
+
+    <div class="header-right">
+      
+      <button class="icon-btn mobile-search-btn" id="mobile-search-toggle" title="Search">
+        <svg viewBox="0 0 24 24" class="yt-icon"><path d="M20.87 20.17l-5.59-5.59C16.35 13.35 17 11.75 17 10c0-3.87-3.13-7-7-7s-7 3.13-7 7 3.13 7 7 7c1.75 0 3.35-.65 4.58-1.71l5.59 5.59.7-.71zM10 16c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z" fill="currentColor"/></svg>
+      </button>
+
+      <button class="icon-btn" id="menu-dots-btn" title="More options">
+        <svg viewBox="0 0 24 24" class="yt-icon"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="mobile-search-overlay" id="mobile-search-overlay">
+    <button class="icon-btn" id="mobile-search-back" title="Back">
+      <svg viewBox="0 0 24 24" class="yt-icon"><path d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z" fill="currentColor"/></svg>
+    </button>
+    <form class="mobile-search-form" id="mobile-search-form">
+      <input type="text" id="mobile-search-input" placeholder="Search YTXTube..." autocomplete="off">
+      <button type="submit" class="icon-btn" title="Search">
+        <svg viewBox="0 0 24 24" class="yt-icon"><path d="M20.87 20.17l-5.59-5.59C16.35 13.35 17 11.75 17 10c0-3.87-3.13-7-7-7s-7 3.13-7 7 3.13 7 7 7c1.75 0 3.35-.65 4.58-1.71l5.59 5.59.7-.71zM10 16c-3.31 0-6-2.69-6-6s2.69-6 6-6 6 2.69 6 6-2.69 6-6 6z" fill="currentColor"/></svg>
+      </button>
+    </form>
+  </div>
+
+  <main class="yt-main" id="main-content">
+    
+    <div class="chips-container" id="chips-bar">
+      <div class="chips-scroll" id="chips-scroll">
+        <button class="chip active" data-category="All">All</button>
+        <button class="chip" data-category="Music">Music</button>
+        <button class="chip" data-category="Gaming">Gaming</button>
+        <button class="chip" data-category="Anime">Anime</button>
+        <button class="chip" data-category="Trailers">Trailers</button>
+        <button class="chip" data-category="AI">AI</button>
+        <button class="chip" data-category="Podcasts">Podcasts</button>
+        <button class="chip" data-category="Sports">Sports</button>
+      </div>
+    </div>
+
+    <section class="feed-view" id="feed-view">
+      <div class="video-grid" id="video-grid">
+        
+      </div>
+      
+      <div class="infinite-loader" id="feed-loader">
+        <div class="spinner"></div>
+        <span>Loading more videos...</span>
+      </div>
+    </section>
+
+    <section class="watch-view" id="watch-view" style="display: none;">
+      <div class="watch-container">
+        
+        <div class="primary-column">
+          
+          <div class="player-wrapper" id="player-wrapper">
+            <div id="player-container" class="player-container">
+              
+            </div>
+          </div>
+
+          <div class="video-info">
+            <h1 class="video-title" id="watch-title">Video Title Loading...</h1>
+
+            <div class="video-actions-row">
+              <div class="channel-info">
+                <img class="channel-avatar-lg" id="watch-channel-avatar" src="" alt="Channel">
+                <div class="channel-text">
+                  <span class="channel-name-lg" id="watch-channel-name">Channel Name</span>
+                  <span class="channel-subs" id="watch-channel-subs">1.2M subscribers</span>
+                </div>
+                <button class="subscribe-btn" id="subscribe-btn">Subscribe</button>
+              </div>
+
+              <div class="action-buttons">
+                <div class="like-dislike-pill">
+                  <button class="like-btn" id="like-btn" title="Like">
+                    <svg viewBox="0 0 24 24" class="yt-icon"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z" fill="currentColor"/></svg>
+                    <span id="watch-like-count">158K</span>
+                  </button>
+                  <div class="pill-divider"></div>
+                  <button class="dislike-btn" id="dislike-btn" title="Dislike">
+                    <svg viewBox="0 0 24 24" class="yt-icon"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z" fill="currentColor"/></svg>
+                  </button>
+                </div>
+
+                <button class="pill-action-btn" id="share-btn" title="Share">
+                  <svg viewBox="0 0 24 24" class="yt-icon"><path d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z" fill="currentColor"/></svg>
+                  <span>Share</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="comments-section" id="comments-section">
+              
+              <div class="comments-preview-card" id="comments-preview-card">
+                <div class="comments-preview-header">
+                  <span class="comments-preview-title">Comments</span>
+                  <span class="comments-preview-count" id="comments-preview-count">184K</span>
+                </div>
+                <div class="comments-preview-body">
+                  <img class="comments-preview-avatar" id="comments-preview-avatar" src="icon.png" alt="User">
+                  <p class="comments-preview-text" id="comments-preview-text">Tap to view comments...</p>
+                </div>
+              </div>
+
+              <div class="desktop-comments-area" id="desktop-comments-area">
+                <div class="desktop-comments-header">
+                  <h3 class="desktop-comments-heading">Comments <span class="comments-count" id="desktop-comments-count">184K</span></h3>
+                </div>
+                <div class="desktop-comments-list" id="desktop-comments-list">
+                  
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="secondary-column">
+          <h3 class="secondary-title">Recommended Videos</h3>
+          <div class="related-list" id="related-list">
+            
+          </div>
+          
+          <div class="related-loader" id="related-loader">
+            <div class="spinner"></div>
+            <span>Loading more recommendations...</span>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div class="modal-backdrop" id="comments-drawer-backdrop" style="display: none;">
+    <div class="comments-drawer" id="comments-drawer">
+      <div class="sheet-handle"></div>
+      <div class="comments-drawer-header">
+        <div class="comments-drawer-title-row">
+          <h3 class="comments-drawer-title">Comments</h3>
+          <span class="comments-drawer-count" id="comments-drawer-count">184K</span>
+        </div>
+        <button class="close-sheet-btn" id="close-comments-drawer-btn" title="Close">✕</button>
+      </div>
+
+      <div class="comments-drawer-body">
+        <div class="add-comment-box">
+          <div class="user-avatar-sm">
+            <img src="icon.png" alt="User">
+          </div>
+          <input type="text" placeholder="Add a comment..." class="comment-input" readonly>
+        </div>
+
+        <div class="comments-list" id="comments-list">
+          
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="options-modal-backdrop" style="display: none;">
+    <div class="options-sheet" id="options-sheet">
+      <div class="sheet-handle"></div>
+      <div class="sheet-header">
+        <h3 class="sheet-title">YTXTube</h3>
+        <button class="close-sheet-btn" id="close-options-btn">✕</button>
+      </div>
+      
+      <div class="sheet-content">
+        
+        <a href="https://github.com/Koustubh12345/YTXTube" target="_blank" rel="noopener noreferrer" class="sheet-item">
+          <div class="sheet-item-icon github-icon">
+            <svg viewBox="0 0 24 24" class="yt-icon"><path d="M12 2A10 10 0 0 0 2 12c0 4.42 2.87 8.17 6.84 9.5.5.08.66-.23.66-.5v-1.69c-2.77.6-3.36-1.34-3.36-1.34-.46-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.6.07-.6 1 .07 1.53 1.03 1.53 1.03.87 1.52 2.34 1.07 2.91.83.1-.65.35-1.09.63-1.34-2.22-.25-4.55-1.11-4.55-4.92 0-1.11.38-2 1.03-2.71-.1-.25-.45-1.29.1-2.64 0 0 .84-.27 2.75 1.02.79-.22 1.65-.33 2.5-.33.85 0 1.71.11 2.5.33 1.91-1.29 2.75-1.02 2.75-1.02.55 1.35.2 2.39.1 2.64.65.71 1.03 1.6 1.03 2.71 0 3.82-2.34 4.66-4.57 4.91.36.31.69.92.69 1.85V21c0 .27.16.59.67.5C19.14 20.16 22 16.42 22 12A10 10 0 0 0 12 2z" fill="currentColor"/></svg>
+          </div>
+          <div class="sheet-item-text">
+            <div class="sheet-item-title">GitHub Repository</div>
+            <div class="sheet-item-desc">If you like the project, give a star on repo ⭐</div>
+          </div>
+          <svg viewBox="0 0 24 24" class="sheet-arrow"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z" fill="currentColor"/></svg>
+        </a>
+
+        <a href="https://t.me/getthefckoutofheree" target="_blank" rel="noopener noreferrer" class="sheet-item">
+          <div class="sheet-item-icon">
+            <svg viewBox="0 0 24 24" class="yt-icon"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14.5v-9l6 4.5-6 4.5z" fill="currentColor"/></svg>
+          </div>
+          <div class="sheet-item-text">
+            <div class="sheet-item-title">Developer</div>
+            <div class="sheet-item-desc">@getthefckoutofheree (Telegram)</div>
+          </div>
+          <svg viewBox="0 0 24 24" class="sheet-arrow"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z" fill="currentColor"/></svg>
+        </a>
+
+        <a href="https://t.me/TenSeiChadChat" target="_blank" rel="noopener noreferrer" class="sheet-item">
+          <div class="sheet-item-icon">
+            <svg viewBox="0 0 24 24" class="yt-icon"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z" fill="currentColor"/></svg>
+          </div>
+          <div class="sheet-item-text">
+            <div class="sheet-item-title">Community</div>
+            <div class="sheet-item-desc">TenSeiChadChat (Join Telegram)</div>
+          </div>
+          <svg viewBox="0 0 24 24" class="sheet-arrow"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z" fill="currentColor"/></svg>
+        </a>
+
+        <div class="sheet-item" id="open-donate-btn">
+          <div class="sheet-item-icon donate-icon">
+            <svg viewBox="0 0 24 24" class="yt-icon"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z" fill="currentColor"/></svg>
+          </div>
+          <div class="sheet-item-text">
+            <div class="sheet-item-title">Donate / Support</div>
+            <div class="sheet-item-desc">Support project with UPI / QR code</div>
+          </div>
+          <svg viewBox="0 0 24 24" class="sheet-arrow"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6-1.41-1.41z" fill="currentColor"/></svg>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="donate-modal-backdrop" style="display: none;">
+    <div class="donate-dialog" id="donate-dialog">
+      <div class="sheet-handle"></div>
+      <div class="donate-header">
+        <h3 class="donate-title">Support YTXTube</h3>
+        <button class="close-sheet-btn" id="close-donate-btn">✕</button>
+      </div>
+
+      <div class="donate-body">
+        <p class="donate-subtitle">Scan QR or use any UPI payment app to donate any amount:</p>
+        
+        <div class="qr-container">
+          <img src="upi_qr.png" alt="UPI QR Code" id="donate-qr-img" class="donate-qr-img">
+        </div>
+
+        <div class="upi-id-box">
+          <span class="upi-label">UPI ID:</span>
+          <span class="upi-value" id="upi-id-text">koustubhgaikwad7-1@okaxis</span>
+          <button class="copy-upi-btn" id="copy-upi-btn" title="Copy UPI ID">Copy</button>
+        </div>
+
+        <div class="donate-actions">
+          <button class="btn-save-qr" id="save-qr-btn">
+            <svg viewBox="0 0 24 24" class="yt-icon" style="width: 18px; height: 18px;"><path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z" fill="currentColor"/></svg>
+            Save QR Code
+          </button>
+          
+          <button class="btn-donate-now" id="donate-now-btn">
+            <svg viewBox="0 0 24 24" class="yt-icon" style="width: 18px; height: 18px;"><path d="M7 2v11h3v9l7-12h-4l4-8z" fill="currentColor"/></svg>
+            Donate Now
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
