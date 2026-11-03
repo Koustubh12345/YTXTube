@@ -2,7 +2,7 @@
 
 # YTXTube
 
-<img src="docs/icon.png" width="100" alt="YTXTube Icon" />
+<img src="docs/icon.png" width="200" alt="YTXTube Icon" />
 
 <br/>
 
