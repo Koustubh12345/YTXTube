@@ -5,6 +5,8 @@ A lightweight YouTube and YouTube Music client with a modern Liquid Glass UI, ad
 ## Features
 
 - Liquid Glass interface across the player, Shorts, fullscreen controls, settings and music mini player
+- Multiple languages support across the entire app
+- 2 Mini player styles: modern YouTube-style floating draggable miniplayer and classic Liquid Glass dock
 - Ad-free YouTube and YouTube Music playback
 - Personalised Shorts feed with a one-tap fresh batch and loading animation
 - Synced lyrics with an Apple Music-style animated lyric view
