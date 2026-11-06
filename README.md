@@ -87,7 +87,9 @@ YTXTube is an independent, open-source project and is **not affiliated with or e
 
 ---
 
-## Base [FlashTube](https://github.com/JustaThinker/FlashTube)
+## Credits
+
+Some ideas and techniques were adapted from [FlashTube](https://github.com/JustaThinker/FlashTube).
 
 ---
 
