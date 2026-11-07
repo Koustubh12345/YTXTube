@@ -74,7 +74,7 @@ Web app to watch YouTube videos without ads or sponsors, playing videos at highe
 Facing issues or have suggestions for YTXTube? Join our Telegram community to report bugs, share feedback, and request new features.
 
 <p align="center">
-  <a href="https://t.me/TenSeiChadChat">
+  <a href="https://t.me/YTXTubeDiscussion">
     <img src="https://img.shields.io/badge/Join%20Telegram%20Community-26A5E4?style=for-the-badge&logo=telegram&logoColor=white" alt="Join Telegram Community" />
   </a>
 </p>
