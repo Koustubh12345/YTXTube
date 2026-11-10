@@ -32,6 +32,14 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.IndicationNodeFactory
+import androidx.compose.foundation.interaction.FocusInteraction
+import androidx.compose.foundation.interaction.InteractionSource
+import androidx.compose.ui.graphics.drawscope.ContentDrawScope
+import androidx.compose.ui.node.DelegatableNode
+import androidx.compose.ui.node.DrawModifierNode
+import androidx.compose.ui.node.invalidateDraw
+import kotlinx.coroutines.launch
 
 
 object Motion {
@@ -89,6 +97,44 @@ fun Modifier.tvFocusRing(
                 )
             }
         }
+}
+
+/**
+ * TV: focus ring for every plain `clickable` (provided as LocalIndication in the theme). Ripple is
+ * disabled app-wide, so without this a focused row/avatar showed nothing.
+ */
+object TvFocusIndication : IndicationNodeFactory {
+    override fun create(interactionSource: InteractionSource): DelegatableNode = Node(interactionSource)
+    override fun equals(other: Any?) = other === this
+    override fun hashCode() = 0
+
+    private class Node(private val source: InteractionSource) : Modifier.Node(), DrawModifierNode {
+        private var focused = false
+        override fun onAttach() {
+            coroutineScope.launch {
+                source.interactions.collect {
+                    focused = when (it) {
+                        is FocusInteraction.Focus -> true
+                        is FocusInteraction.Unfocus -> false
+                        else -> return@collect
+                    }
+                    invalidateDraw()
+                }
+            }
+        }
+        override fun ContentDrawScope.draw() {
+            drawContent()
+            if (!focused) return
+            val stroke = 2.dp.toPx()
+            drawRoundRect(
+                color = TvFocusColor,
+                topLeft = Offset(stroke / 2f, stroke / 2f),
+                size = Size(size.width - stroke, size.height - stroke),
+                cornerRadius = CornerRadius(12.dp.toPx()),
+                style = Stroke(stroke),
+            )
+        }
+    }
 }
 
 /** TV: which card opened the player, so focus can go back to it when the player closes. */

@@ -23,6 +23,7 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -555,6 +556,7 @@ fun YtxTubeTheme(content: @Composable () -> Unit) {
         CompositionLocalProvider(
 
             LocalRippleConfiguration provides null,
+            LocalIndication provides if (TvMode.isTv) TvFocusIndication else LocalIndication.current,
 
 
             LocalContentColor provides scheme.onSurface,
