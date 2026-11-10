@@ -13,6 +13,17 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.draw.blur
 import com.kyant.backdrop.Backdrop
 import com.kyant.backdrop.drawBackdrop
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.focusGroup
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.kyant.backdrop.effects.vibrancy
@@ -319,6 +330,10 @@ fun PlayerScreen(
         ActionMessage(state, Modifier.align(Alignment.BottomCenter).zIndex(1f).padding(bottom = bottom + 24.dp))
         if (state.isMusicMode) {
             val p = morph.progress.value
+            val tvMusicFocus = remember { FocusRequester() }
+            if (TvMode.isTv) LaunchedEffect(state.expanded) {
+                if (state.expanded) { delay(300); runCatching { tvMusicFocus.requestFocus() } } // after the open morph
+            }
             Box(
                 Modifier
                     .fillMaxSize()
@@ -326,6 +341,8 @@ fun PlayerScreen(
                         alpha = ramp(p, 0.35f)
                         translationY = lerpF(48f, 0f, ramp(p, 0.35f))
                     }
+                    // TV: take focus and keep the D-pad inside; else it lands on the music feed behind. BACK collapses.
+                    .then(if (TvMode.isTv) Modifier.focusRequester(tvMusicFocus).focusProperties { onExit = { cancelFocusChange() } }.focusGroup() else Modifier)
             ) {
                 BitChordMusicPlayer(
                     state = state,
@@ -1176,6 +1193,7 @@ fun BitChordMusicPlayer(
     val c = MaterialTheme.colorScheme
     val item = state.current ?: return
     val context = LocalContext.current
+    val focusManager = LocalFocusManager.current
     var showTrackMenu by remember(item.id) { mutableStateOf(false) }
     var showLyrics by remember(item.id) { mutableStateOf(false) }
     var lyrics by remember(item.id) { mutableStateOf<LyricsDoc?>(null) }
@@ -1298,7 +1316,8 @@ fun BitChordMusicPlayer(
             } else {
                 Box(
                     modifier = Modifier
-                        .fillMaxWidth(0.92f)
+                        // TV is landscape: a width-based square overflows the screen and hides the controls.
+                        .then(if (TvMode.isTv) Modifier.weight(3.5f) else Modifier.fillMaxWidth(0.92f))
                         .aspectRatio(1f)
                         .graphicsLayer {
                             scaleX = albumScale
@@ -1394,7 +1413,14 @@ fun BitChordMusicPlayer(
                     activeTrackColor = c.onSurface,
                     inactiveTrackColor = c.onSurface.copy(alpha = 0.2f),
                 ),
-                modifier = Modifier.fillMaxWidth(),
+                // TV: Slider eats UP/DOWN as value changes, trapping the remote; keep only LEFT/RIGHT for seeking.
+                modifier = Modifier.fillMaxWidth().then(
+                    if (TvMode.isTv) Modifier.tvFocusRing(radius = 8.dp).onPreviewKeyEvent { e ->
+                        val dir = when (e.key) { Key.DirectionUp -> FocusDirection.Up; Key.DirectionDown -> FocusDirection.Down; else -> null }
+                        if (dir != null && e.type == KeyEventType.KeyDown) focusManager.moveFocus(dir)
+                        dir != null
+                    } else Modifier
+                ),
             )
 
 

@@ -14,6 +14,8 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.LocalRippleConfiguration
+import androidx.compose.material3.RippleConfiguration
+import androidx.compose.material.ripple.RippleAlpha
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.Typography
@@ -555,7 +557,8 @@ fun YtxTubeTheme(content: @Composable () -> Unit) {
     MaterialTheme(colorScheme = scheme, shapes = ExpressiveShapes, typography = Typography()) {
         CompositionLocalProvider(
 
-            LocalRippleConfiguration provides null,
+            // TV: ripple only for focus, so Material IconButtons show where the remote is.
+            LocalRippleConfiguration provides if (TvMode.isTv) RippleConfiguration(TvFocusColor, RippleAlpha(0f, 0.45f, 0f, 0f)) else null,
             LocalIndication provides if (TvMode.isTv) TvFocusIndication else LocalIndication.current,
 
 

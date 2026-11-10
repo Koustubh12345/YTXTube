@@ -612,7 +612,7 @@ fun YtxTubeApp() {
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 // TV: end pages above the nav bar's bottom edge, else D-pad Up from the nav skips them.
-                .padding(bottom = if (TvMode.isTv) 32.dp else 0.dp)
+                .padding(bottom = if (TvMode.isTv) 32.dp + (if (hasMini) MiniHeight + MiniGap else 0.dp) else 0.dp)
                 .widthIn(max = if (TvMode.isTv) 1280.dp else Dp.Unspecified)
                 .fillMaxHeight(),
             transitionSpec = {
