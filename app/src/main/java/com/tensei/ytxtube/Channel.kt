@@ -371,9 +371,7 @@ fun ChannelScreen(
                 }
                 when (state.activeTab) {
                     ChannelTab.Videos -> {
-                        items(state.videos, key = { it.id }) { video ->
-                            VideoCard(video, onClick = { onOpen(video) }, modifier = Modifier.animateItem())
-                        }
+                        videoCards(state.videos, onOpen)
                         if (state.loading || state.hasMore) item {
                             Box(Modifier.fillMaxWidth().padding(28.dp), Alignment.Center) {
                                 CircularProgressIndicator(color = c.primary, strokeWidth = 4.dp, modifier = Modifier.size(32.dp))
@@ -422,9 +420,7 @@ fun ChannelScreen(
                                 )
                             }
                         } else {
-                            items(state.liveVideos, key = { it.id }) { video ->
-                                VideoCard(video, onClick = { onOpen(video) }, modifier = Modifier.animateItem())
-                            }
+                            videoCards(state.liveVideos, onOpen)
                         }
                     }
                     ChannelTab.Community -> {

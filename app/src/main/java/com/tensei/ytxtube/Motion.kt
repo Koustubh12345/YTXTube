@@ -17,7 +17,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.foundation.focusGroup
+import androidx.compose.runtime.LaunchedEffect
+import kotlinx.coroutines.delay
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -84,6 +89,41 @@ fun Modifier.tvFocusRing(
                 )
             }
         }
+}
+
+/** TV: which card opened the player, so focus can go back to it when the player closes. */
+object TvFocusMemory {
+    var lastId by mutableStateOf<String?>(null)
+    var restoreTick by mutableStateOf(0)
+}
+
+/** TV: take focus back when the player closes and this card opened it. No-op off TV. */
+fun Modifier.tvRestoreFocus(id: String): Modifier = composed {
+    if (!TvMode.isTv) return@composed Modifier
+    val requester = remember { FocusRequester() }
+    val tickAtCompose = remember { TvFocusMemory.restoreTick }
+    LaunchedEffect(TvFocusMemory.restoreTick) {
+        // Skip the tick already current when composed, else a card scrolled back into view would steal focus.
+        if (TvFocusMemory.restoreTick != tickAtCompose && TvFocusMemory.lastId == id) {
+            delay(150) // player close animation
+            if (runCatching { requester.requestFocus() }.isSuccess) TvFocusMemory.lastId = null
+        }
+    }
+    Modifier.focusRequester(requester)
+}
+
+/**
+ * TV: in-window sheets (speed, audio, settings) don't take focus when they appear, leaving the remote dead.
+ * Pulls focus to the first focusable child once shown. No-op off TV.
+ */
+fun Modifier.tvFocusOnShow(): Modifier = composed {
+    if (!TvMode.isTv) return@composed Modifier
+    val requester = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        delay(80) // let the enter animation lay the sheet out first
+        runCatching { requester.requestFocus() }
+    }
+    Modifier.focusRequester(requester).focusGroup()
 }
 
 @OptIn(ExperimentalFoundationApi::class)

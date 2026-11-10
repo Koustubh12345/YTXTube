@@ -418,6 +418,7 @@ private fun PlayerGlassSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .tvFocusOnShow()
                     .verticalScroll(rememberScrollState()),
                 content = content,
             )

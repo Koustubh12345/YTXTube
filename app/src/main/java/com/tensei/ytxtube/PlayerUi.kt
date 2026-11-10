@@ -337,8 +337,25 @@ fun PlayerScreen(
             }
         } else {
         val screenConfig = androidx.compose.ui.platform.LocalConfiguration.current
-        val isWide = TvMode.isTv || screenConfig.screenWidthDp >= 640
-        if (isWide) {
+        val isWide = screenConfig.screenWidthDp >= 640
+        if (TvMode.isTv) {
+            // TV: YouTube-style watch page. Full-width video, then details, then "More videos" below; D-pad scrolls.
+            Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                Spacer(Modifier.height(top))
+                Box(Modifier.zIndex(2f).fillMaxWidth()) {
+                    VideoStage(state, morph, onCollapse, onFullscreen, interactive)
+                }
+                if (showDetails) {
+                    VideoDetailsBlock(state, item, details, c, descriptionOpen, { descriptionOpen = !descriptionOpen }, isLiveStream)
+                    val related = details?.related.orEmpty()
+                    if (related.isNotEmpty()) SectionTitle("More videos")
+                    related.forEach { video ->
+                        Box(Modifier.padding(horizontal = 20.dp)) { VideoRow(video, onClick = { onOpen(video) }) }
+                    }
+                }
+                Spacer(Modifier.height(bottom + 32.dp))
+            }
+        } else if (isWide) {
             Row(Modifier.fillMaxSize()) {
                 Column(
                     Modifier
@@ -556,7 +573,8 @@ private fun VideoStage(state: PlayerState, morph: PlayerMorph, onCollapse: () ->
         VideoContent(
             state = state,
             fullscreen = false,
-            interactive = interactive,
+            // TV: stand down behind fullscreen, else this hidden copy can grab remote focus.
+            interactive = interactive && !(TvMode.isTv && state.fullscreen),
 
             onInactiveTap = { state.expanded = true },
             onCollapse = onCollapse,
