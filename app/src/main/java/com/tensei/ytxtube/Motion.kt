@@ -32,6 +32,13 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.focus.FocusDirection
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.foundation.IndicationNodeFactory
 import androidx.compose.foundation.interaction.FocusInteraction
 import androidx.compose.foundation.interaction.InteractionSource
@@ -135,6 +142,33 @@ object TvFocusIndication : IndicationNodeFactory {
             )
         }
     }
+}
+
+/**
+ * TV: put before `.clickable` on a row that also holds buttons. D-pad search never enters a focused
+ * node's own children, so RIGHT steps into the buttons and LEFT from the first one returns to the row.
+ */
+fun Modifier.tvRowWithButtons(): Modifier = composed {
+    if (!TvMode.isTv) return@composed Modifier
+    val focusManager = LocalFocusManager.current
+    val row = remember { FocusRequester() }
+    var self by remember { mutableStateOf(false) }
+    var inside by remember { mutableStateOf(false) }
+    Modifier
+        .focusRequester(row)
+        .onFocusChanged { self = it.isFocused; inside = it.hasFocus }
+        .onPreviewKeyEvent { e ->
+            if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+            when {
+                self && e.key == Key.DirectionRight -> focusManager.moveFocus(FocusDirection.Enter)
+                !self && inside && e.key == Key.DirectionLeft -> {
+                    // Left of the first button lies outside the row (e.g. a back arrow); return to the row instead.
+                    if (!focusManager.moveFocus(FocusDirection.Left) || !inside) runCatching { row.requestFocus() }
+                    true
+                }
+                else -> false
+            }
+        }
 }
 
 /** TV: which card opened the player, so focus can go back to it when the player closes. */
