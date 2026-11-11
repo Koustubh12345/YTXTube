@@ -353,7 +353,8 @@ fun VideoCard(video: VideoItem, onClick: () -> Unit, modifier: Modifier = Modifi
         modifier = modifier
             .fillMaxWidth()
             .prefetchOnPress(video.id)
-            .pressable(pressedScale = 0.98f, onLongClick = { menu(video) }, onClick = onClick)
+            .tvRestoreFocus(video.id)
+            .pressable(pressedScale = 0.98f, onLongClick = { menu(video) }, onClick = { TvFocusMemory.lastId = video.id; onClick() })
             .padding(bottom = 16.dp),
     ) {
         Box(Modifier.fillMaxWidth()) {

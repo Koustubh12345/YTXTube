@@ -913,7 +913,8 @@ fun SearchScreen(
 
 
     fun submit() {
-        focus.clearFocus(force = true)
+        // TV: with nothing focused the D-pad is dead, so keep focus on the field; Down then enters the results.
+        if (!TvMode.isTv) focus.clearFocus(force = true)
         keyboard?.hide()
         view.postDelayed({
             view.context.getSystemService(InputMethodManager::class.java)
@@ -961,6 +962,10 @@ fun SearchScreen(
                                 .onPreviewKeyEvent { e ->
                                     if (e.key == Key.Enter || e.key == Key.NumPadEnter) {
                                         if (e.type == KeyEventType.KeyDown) submit()
+                                        true
+                                    } else if (TvMode.isTv && e.key == Key.DirectionDown) {
+                                        // TV: the field eats Down as a cursor move; send it to the results instead.
+                                        if (e.type == KeyEventType.KeyDown) focus.moveFocus(androidx.compose.ui.focus.FocusDirection.Down)
                                         true
                                     } else false
                                 },
@@ -1164,17 +1169,23 @@ fun SearchScreen(
             )
             else -> {
                 val list = rememberScrollToTop(scrollToTop)
-                LaunchedEffect(state.generation) { list.scrollToItem(0) }
-                LazyColumn(state = list, contentPadding = contentPadding.withTop(top)) {
-                items(state.results, key = { it.id }) { video ->
-                    VideoCard(video, onClick = {
-                        val currentQuery = state.submitted.trim().ifEmpty { state.query.trim() }
-                        if (currentQuery.isNotEmpty()) {
-                            SearchHistory.add(currentQuery)
-                        }
-                        onOpen(video)
-                    })
+                LaunchedEffect(state.generation) {
+                    list.scrollToItem(0)
+                    // TV: submitting from the on-screen keyboard leaves nothing focused; put the ring on the first result.
+                    if (TvMode.isTv) {
+                        delay(300) // let the keyboard close and the cards compose
+                        TvFocusMemory.lastId = state.results.firstOrNull()?.id
+                        TvFocusMemory.restoreTick++
+                    }
                 }
+                LazyColumn(state = list, contentPadding = contentPadding.withTop(top)) {
+                videoCards(state.results, animate = false, onOpen = { video ->
+                    val currentQuery = state.submitted.trim().ifEmpty { state.query.trim() }
+                    if (currentQuery.isNotEmpty()) {
+                        SearchHistory.add(currentQuery)
+                    }
+                    onOpen(video)
+                })
             }
             }
         }

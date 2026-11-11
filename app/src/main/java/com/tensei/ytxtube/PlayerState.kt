@@ -237,6 +237,8 @@ class PlayerState(private val scope: CoroutineScope) {
         AudioOnly.set(false)
         runCatching { applyVideoTrack() }
         if (expand) expanded = true
+        // TV: open straight into fullscreen like YouTube; Back drops to the watch page.
+        if (expand && TvMode.isTv) fullscreen = true
         if (current?.id == item.id && error == null) return
         known[item.id] = item
         show(item, startPlayback = true)

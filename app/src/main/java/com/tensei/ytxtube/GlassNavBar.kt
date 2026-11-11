@@ -423,13 +423,14 @@ fun RowScope.LiquidNavTab(
     tab: Tab,
     selected: Boolean,
     isDarkSurface: Boolean = false,
+    modifier: Modifier = Modifier,
     onClick: () -> Unit
 ) {
     val isLightTheme = !isDarkSurface && !isSystemInDarkTheme() && ThemeSettings.mode != "dark" && ThemeSettings.mode != "amoled"
     val contentColor = if (isLightTheme) Color.Black else Color.White
     val active = tab == Tab.Downloads && Downloads.busy
 
-    LiquidBottomTab(onClick = onClick) {
+    LiquidBottomTab(onClick = onClick, modifier = modifier) {
         Box(
             contentAlignment = Alignment.Center,
             modifier = Modifier.size(28.dp)

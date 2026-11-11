@@ -1222,6 +1222,7 @@ private fun MusicMixScreen(
     Box(
         Modifier
             .fillMaxSize()
+            .tvFocusOnShow() // TV: the card that opened this page is gone; focus would be lost
             .background(c.surface),
     ) {
         Column(Modifier.fillMaxSize()) {
@@ -1346,6 +1347,7 @@ private fun MusicMixSongRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .tvRowWithButtons()
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 7.dp),
         verticalAlignment = Alignment.CenterVertically,

@@ -101,6 +101,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -369,6 +372,8 @@ fun YtxTubeApp() {
     val mainActivity = activity as? MainActivity
     val orientation = rememberOrientationController(activity)
     val playerOpen = player.current != null && player.expanded
+    // TV: player closed → nothing focused; ask the card that opened it to take focus back.
+    LaunchedEffect(player.current == null) { if (TvMode.isTv && player.current == null) TvFocusMemory.restoreTick++ }
 
     orientation.Bind(playerOpen && !AudioOnly.enabled && !player.isMusicMode)
     val pip = remember(activity) { PipController(activity as ComponentActivity) }
@@ -459,7 +464,8 @@ fun YtxTubeApp() {
     }
 
     BackHandler(enabled = showFullscreen) { exitFullscreen() }
-    BackHandler(enabled = !showFullscreen && player.expanded) { player.expanded = false }
+    // TV: no touch to dismiss the mini player, so Back stops playback instead of minimising.
+    BackHandler(enabled = !showFullscreen && player.expanded) { if (TvMode.isTv && !player.isMusicMode) player.close() else player.expanded = false }
     BackHandler(enabled = !player.expanded && openSettings) { openSettings = false }
     BackHandler(enabled = !player.expanded && openAllSubscriptions && openChannel == null) { openAllSubscriptions = false }
     BackHandler(enabled = !player.expanded && tab != Tab.Home && openPlaylist == null && openChannel == null && !openAllSubscriptions) {
@@ -482,6 +488,13 @@ fun YtxTubeApp() {
     }
     BackHandler(enabled = updateState.visible) { updateState.dismiss() }
 
+    // TV: the feed scrolls forever, so D-pad Down never reaches the nav bar. Back jumps to it first.
+    val navFocus = remember { FocusRequester() }
+    var navFocused by remember { mutableStateOf(false) }
+    val tvBackToNav = TvMode.isTv && !navFocused && !player.expanded && !openSettings && !openAllSubscriptions &&
+        openPlaylist == null && openChannel == null && !openSearch && !signingIn && !showFullscreen &&
+        shortsEntry == null && !updateState.visible
+
     val canHandleRootBack = !player.expanded && !openSettings && !openAllSubscriptions &&
         tab == Tab.Home && openPlaylist == null && openChannel == null &&
         !openSearch && !signingIn && !showFullscreen && shortsEntry == null && !updateState.visible
@@ -498,6 +511,10 @@ fun YtxTubeApp() {
             activity.moveTaskToBack(true)
         }
     }
+    // Registered last so it wins over the tab/root handlers above.
+    BackHandler(enabled = tvBackToNav) { runCatching { navFocus.requestFocus() } }
+    // Keep the nav focus ring on the selected tab when Back switches tabs.
+    LaunchedEffect(tab) { if (TvMode.isTv && navFocused) runCatching { navFocus.requestFocus() } }
 
     val density = LocalDensity.current
 
@@ -594,6 +611,8 @@ fun YtxTubeApp() {
             targetState = tab,
             modifier = Modifier
                 .align(Alignment.TopCenter)
+                // TV: end pages above the nav bar's bottom edge, else D-pad Up from the nav skips them.
+                .padding(bottom = if (TvMode.isTv) 32.dp + (if (hasMini) MiniHeight + MiniGap else 0.dp) else 0.dp)
                 .widthIn(max = if (TvMode.isTv) 1280.dp else Dp.Unspecified)
                 .fillMaxHeight(),
             transitionSpec = {
@@ -671,6 +690,7 @@ fun YtxTubeApp() {
 
         AnimatedVisibility(
             visible = openPlaylist != null,
+            modifier = Modifier.tvFocusOnShow(), // TV: the item that opened this page is gone; focus would be lost
             enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
             exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
         ) {
@@ -692,6 +712,7 @@ fun YtxTubeApp() {
 
         AnimatedVisibility(
             visible = openAllSubscriptions,
+            modifier = Modifier.tvFocusOnShow(), // TV: the item that opened this page is gone; focus would be lost
             enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
             exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
         ) {
@@ -705,6 +726,7 @@ fun YtxTubeApp() {
 
         AnimatedVisibility(
             visible = openChannel != null,
+            modifier = Modifier.tvFocusOnShow(), // TV: the item that opened this page is gone; focus would be lost
             enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
             exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
         ) {
@@ -726,6 +748,7 @@ fun YtxTubeApp() {
 
         AnimatedVisibility(
             visible = openSettings,
+            modifier = Modifier.tvFocusOnShow(), // TV: the item that opened this page is gone; focus would be lost
             enter = if (reduced) fadeIn(snap()) else slideInHorizontally(tween(340, easing = Motion.Emphasized)) { it } + fadeIn(tween(120)),
             exit = if (reduced) fadeOut(snap()) else slideOutHorizontally(tween(300, easing = Motion.Emphasized)) { it } + fadeOut(tween(220)),
         ) {
@@ -864,10 +887,15 @@ fun YtxTubeApp() {
                 onTabSelected = { index -> Tab.entries.getOrNull(index)?.let(selectTab) },
                 backdrop = pageBackdrop,
                 isDarkSurface = tab == Tab.Shorts,
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { navFocused = it.hasFocus },
             ) {
                 Tab.entries.forEach { t ->
-                    LiquidNavTab(t, t == tab, isDarkSurface = tab == Tab.Shorts) { selectTab(t) }
+                    LiquidNavTab(
+                        t, t == tab, isDarkSurface = tab == Tab.Shorts,
+                        modifier = if (t == tab) Modifier.focusRequester(navFocus) else Modifier,
+                    ) { selectTab(t) }
                 }
             }
         }

@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
@@ -56,6 +57,17 @@ fun CollapsingHeaderLayout(
 ) {
     val density = LocalDensity.current
     val c = MaterialTheme.colorScheme
+    // TV: stack, don't overlay. A list drawn behind the header starts above it, so D-pad Down skips it.
+    if (TvMode.isTv) {
+        val tvBackdrop = rememberLayerBackdrop()
+        Column(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxWidth().background(c.surface)) {
+                CompositionLocalProvider(LocalGlassBackdrop provides tvBackdrop) { header() }
+            }
+            Box(Modifier.weight(1f).fillMaxWidth().layerBackdrop(tvBackdrop)) { content(0.dp) }
+        }
+        return
+    }
     val reduced = rememberReducedMotion()
     val scope = rememberCoroutineScope()
     var headerPx by remember { mutableIntStateOf(0) }

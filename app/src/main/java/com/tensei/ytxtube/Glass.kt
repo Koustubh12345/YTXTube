@@ -51,7 +51,8 @@ object GlassQuality {
 
     fun init(context: Context) {
         val am = context.getSystemService(ActivityManager::class.java)
-        deviceSupports = isRuntimeShaderSupported() && am?.isLowRamDevice != true
+        // TV: blur shaders re-run on every video frame; weak TV GPUs drop to ~10fps.
+        deviceSupports = !TvMode.isTv && isRuntimeShaderSupported() && am?.isLowRamDevice != true
         effectsSupported = deviceSupports && GlassSettings.enabled
     }
 

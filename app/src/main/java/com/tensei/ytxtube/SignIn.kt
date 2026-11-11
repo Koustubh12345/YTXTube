@@ -133,6 +133,13 @@ fun SignInScreen(onDone: () -> Unit, onCancel: () -> Unit) {
                         settings.javaScriptEnabled = true
                         settings.domStorageEnabled = true
                         settings.userAgentString = WebSettings.getDefaultUserAgent(context).replace("; wv", "")
+                        // TV: the WebView never gets focus on its own, so the remote stays on the screen behind it.
+                        // Focused, the WebView's own D-pad navigation moves between the email box, links and buttons.
+                        if (TvMode.isTv) {
+                            isFocusable = true
+                            isFocusableInTouchMode = true
+                            post { requestFocus() }
+                        }
 
                         fun checkSignIn(view: WebView, url: String) {
                             if (finishing) return

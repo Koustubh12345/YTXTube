@@ -3,6 +3,7 @@ package com.tensei.ytxtube
 import android.graphics.SurfaceTexture
 import android.util.Log
 import android.view.Surface
+import android.view.SurfaceView
 import android.view.TextureView
 import android.view.View
 import androidx.compose.runtime.Composable
@@ -59,6 +60,16 @@ object SharedVideoTexture {
 
 @Composable
 fun VideoSurface(player: Player?, modifier: Modifier = Modifier) {
+    if (TvMode.isTv) {
+        // TV: SurfaceView goes straight to a hardware overlay; TextureView made the GPU re-composite every frame and stutter.
+        AndroidView(
+            modifier = modifier,
+            factory = { SurfaceView(it) },
+            update = { player?.setVideoSurfaceView(it) },
+            onRelease = { player?.clearVideoSurfaceView(it) },
+        )
+        return
+    }
     AndroidView(
         modifier = modifier,
         factory = { context ->

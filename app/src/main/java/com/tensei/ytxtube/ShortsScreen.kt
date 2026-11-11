@@ -80,8 +80,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
@@ -96,7 +96,6 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -235,7 +234,6 @@ fun ShortsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val focusManager = LocalFocusManager.current
 
     val view = androidx.compose.ui.platform.LocalView.current
     val dark = isDarkTheme()
@@ -538,6 +536,7 @@ fun ShortsScreen(
                 val pageOffset = ((pager.currentPage - index) + pager.currentPageOffsetFraction)
                     .absoluteValue.coerceIn(0f, 1f)
                 val pageFocus = remember { FocusRequester() }
+                val railFocus = remember { FocusRequester() }
                 var selfFocused by remember { mutableStateOf(false) }
                 LaunchedEffect(index, page) {
                     if (TvMode.isTv && index == page && feed.videos.isNotEmpty()) {
@@ -587,7 +586,8 @@ fun ShortsScreen(
                                             true
                                         }
                                         Key.DirectionRight -> {
-                                            focusManager.moveFocus(FocusDirection.Right)
+                                            // The rail is a child of this focused box; 2D search never enters it.
+                                            runCatching { railFocus.requestFocus() }
                                             true
                                         }
                                         else -> false
@@ -789,6 +789,18 @@ fun ShortsScreen(
                                 .padding(
                                     end = 8.dp,
                                     bottom = bottomInset + 22.dp,
+                                )
+                                .then(
+                                    if (TvMode.isTv) Modifier
+                                        .focusRequester(railFocus)
+                                        .focusGroup()
+                                        .onPreviewKeyEvent { e ->
+                                            if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft) {
+                                                runCatching { pageFocus.requestFocus() }
+                                                true
+                                            } else false
+                                        }
+                                    else Modifier,
                                 ),
                             item = item,
                             info = info,

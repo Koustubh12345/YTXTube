@@ -202,6 +202,20 @@ fun rememberScrollToTop(signal: Int): LazyListState {
 }
 
 
+/** Video cards for a LazyColumn. TV is ~960dp wide, where one full-width card fills the screen, so 3 per row. */
+fun LazyListScope.videoCards(videos: List<VideoItem>, onOpen: (VideoItem) -> Unit, animate: Boolean = true) {
+    if (TvMode.isTv) {
+        items(videos.chunked(3), key = { "tvrow-" + it.first().id }) { row ->
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                row.forEach { video -> VideoCard(video, onClick = { onOpen(video) }, modifier = Modifier.weight(1f)) }
+                repeat(3 - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    } else items(videos, key = { it.id }) { video ->
+        VideoCard(video, onClick = { onOpen(video) }, modifier = if (animate) Modifier.animateItem() else Modifier)
+    }
+}
+
 @Composable
 fun FeedList(
     feed: FeedState,
@@ -238,13 +252,7 @@ fun FeedList(
     PullToRefresh(enabled = pullToRefresh, refreshing = feed.refreshing, onRefresh = feed::refresh, topPadding = indicatorTop) {
     LazyColumn(state = list, contentPadding = contentPadding) {
         header()
-        items(listVideos, key = { it.id }) { video ->
-            VideoCard(
-                video,
-                onClick = { onOpen(video) },
-                modifier = Modifier.animateItem(),
-            )
-        }
+        videoCards(listVideos, onOpen)
         when {
 
 
